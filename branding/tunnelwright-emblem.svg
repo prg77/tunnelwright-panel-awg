@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512">
+  <title>Tunnelwright</title>
+  <defs>
+    <clipPath id="tw-inner"><polygon points="50,12 88,89 12,89"/></clipPath>
+  </defs>
+  <g clip-path="url(#tw-inner)">
+    <polygon points="16,90 28,66 33,70 44,40 47,44 54,22 60,40 64,36 72,54 76,52 86,90" fill="#1E3B30"/>
+    <polygon points="54,22 49,40 52,46 45,58 49,64 41,76 43,90 57,90 52,80 57,70 53,60 57,48 55,38" fill="#4E8C6A"/>
+    <polygon points="54,22 51,32 54,36 55,30" fill="#7DB894"/>
+    <polygon points="49,40 52,46 48,50" fill="#7DB894"/>
+    <polygon points="60,40 58,52 64,60 61,70 68,90 86,90 76,52 72,54 64,36" fill="#2E6450"/>
+    <polygon points="72,54 70,64 75,72 80,90 86,90 76,52" fill="#24503F"/>
+    <polygon points="33,70 28,66 16,90 30,90 34,80 30,76" fill="#2E6450"/>
+    <polygon points="44,40 47,44 42,54 38,52" fill="#4E8C6A"/>
+    <path d="M60 40L58 52L64 60L61 70L68 90M33 70L30 76L34 80L30 90M72 54L70 64L75 72M45 58L49 64" fill="none" stroke="#15291F" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M42 90V79a8 8 0 0 1 16 0V90Z" fill="#F2C14E"/>
+    <path d="M45.5 90V80.5a4.5 4.5 0 0 1 9 0V90Z" fill="#FFE29A"/>
+    <path d="M42 90V79a8 8 0 0 1 16 0V90" fill="none" stroke="#EFE6D2" stroke-width="1.6"/>
+  </g>
+  <polygon points="50,5 93,92 7,92" fill="none" stroke="#EFE6D2" stroke-width="3.4" stroke-linejoin="miter"/>
+</svg>

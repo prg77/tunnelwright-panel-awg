@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512">
+  <title>Tunnelwright</title>
+  <style>.f{stroke:#EFE6D2}@media (prefers-color-scheme: light){.f{stroke:#1E2A24}}</style>
+  <defs>
+    <clipPath id="tw-icon"><polygon points="50,16 85,87 15,87"/></clipPath>
+  </defs>
+  <g clip-path="url(#tw-icon)">
+    <polygon points="10,90 32,58 52,20 70,50 90,90" fill="#1E3B30"/>
+    <polygon points="52,20 44,46 38,90 54,90 50,62 58,42" fill="#4E8C6A"/>
+    <polygon points="70,50 62,66 70,90 90,90" fill="#2E6450"/>
+    <path d="M39 90V75a11 11 0 0 1 22 0V90Z" fill="#F2C14E"/>
+    <path d="M39 90V75a11 11 0 0 1 22 0V90" fill="none" stroke="#1E3B30" stroke-width="2.4"/>
+  </g>
+  <polygon points="50,5 94,93 6,93" class="f" fill="none" stroke-width="6" stroke-linejoin="miter"/>
+</svg>

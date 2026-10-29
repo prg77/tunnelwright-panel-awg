@@ -153,14 +153,40 @@ const GLOBAL_CSS = `
   }
 `;
 
-// Логотип: щит с градиентом в цветах индикатора меню
-const Logo = ({size=24}) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-    <defs><linearGradient id="lg-logo" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stopColor="#f55f3e"/><stop offset="1" stopColor="#ffb357"/></linearGradient></defs>
-    <path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3z" fill="url(#lg-logo)"/>
-    <path d="M9 12.5 11 14.5 15.5 10" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-);
+// Логотип Tunnelwright: гора со светящимся туннелем в треугольнике (branding/).
+// Мелкий размер — упрощённая иконка, крупный — эмблема с гранями; рамка — по теме (--logo-frame)
+const Logo = ({size=24}) => {
+  const id = React.useId();
+  const frame = "var(--logo-frame)";
+  if (size < 40) return (
+    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
+      <defs><clipPath id={id}><polygon points="50,16 85,87 15,87"/></clipPath></defs>
+      <g clipPath={`url(#${id})`}>
+        <polygon points="10,90 32,58 52,20 70,50 90,90" fill="#1E3B30"/>
+        <polygon points="52,20 44,46 38,90 54,90 50,62 58,42" fill="#4E8C6A"/>
+        <polygon points="70,50 62,66 70,90 90,90" fill="#2E6450"/>
+        <path d="M39 90V75a11 11 0 0 1 22 0V90Z" fill="#F2C14E"/>
+      </g>
+      <polygon points="50,5 94,93 6,93" fill="none" stroke={frame} strokeWidth="6"/>
+    </svg>
+  );
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
+      <defs><clipPath id={id}><polygon points="50,12 88,89 12,89"/></clipPath></defs>
+      <g clipPath={`url(#${id})`}>
+        <polygon points="16,90 28,66 33,70 44,40 47,44 54,22 60,40 64,36 72,54 76,52 86,90" fill="#1E3B30"/>
+        <polygon points="54,22 49,40 52,46 45,58 49,64 41,76 43,90 57,90 52,80 57,70 53,60 57,48 55,38" fill="#4E8C6A"/>
+        <polygon points="54,22 51,32 54,36 55,30" fill="#7DB894"/>
+        <polygon points="60,40 58,52 64,60 61,70 68,90 86,90 76,52 72,54 64,36" fill="#2E6450"/>
+        <polygon points="33,70 28,66 16,90 30,90 34,80 30,76" fill="#2E6450"/>
+        <path d="M60 40L58 52L64 60L61 70L68 90M33 70L30 76L34 80L30 90M72 54L70 64L75 72" fill="none" stroke="#15291F" strokeWidth="1.4" strokeLinejoin="round"/>
+        <path d="M42 90V79a8 8 0 0 1 16 0V90Z" fill="#F2C14E"/>
+        <path d="M45.5 90V80.5a4.5 4.5 0 0 1 9 0V90Z" fill="#FFE29A"/>
+      </g>
+      <polygon points="50,5 93,92 7,92" fill="none" stroke={frame} strokeWidth="3.4"/>
+    </svg>
+  );
+};
 const SUN = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>;
 const MOON = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>;
 const fmtBits = (kbs) => { const b=(kbs||0)*1024*8; if(!b||isNaN(b))return"0 бит/с"; if(b>=1e9)return(b/1e9).toFixed(2)+" Гбит/с"; if(b>=1e6)return(b/1e6).toFixed(2)+" Мбит/с"; if(b>=1e3)return(b/1e3).toFixed(1)+" Кбит/с"; return Math.round(b)+" бит/с"; };
@@ -417,7 +443,7 @@ function App() {
       <style>{GLOBAL_CSS}</style>
       <div style={{width:"100%",maxWidth:400}}>
         <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,marginBottom:24}}>
-          <Logo size={56}/>
+          <Logo size={72}/>
           <div style={{fontSize:24,fontWeight:400,textAlign:"center"}}>{portalName}</div>
         </div>
         <form onSubmit={e=>{e.preventDefault();doLogin();}} autoComplete="on" className="panel"

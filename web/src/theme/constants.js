@@ -1,7 +1,7 @@
 // Порог «онлайн»: клиент считается онлайн если последний хендшейк был < 3 минут назад
 export const ONLINE_MS = 3 * 60 * 1000;
 // Версия подставляется при сборке образа (Dockerfile: ARG APP_VERSION)
-export const APP_VERSION = import.meta.env.VITE_APP_VERSION || "1.0.0";
+export const APP_VERSION = import.meta.env.VITE_APP_VERSION || "1.0.1";
 
 // Те же значения, что в theme/tokens.css — для мест, где к цвету дописывается прозрачность (`${T.cyan}18`)
 export const THEMES = {

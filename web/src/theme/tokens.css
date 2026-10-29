@@ -33,6 +33,7 @@
   --border-medium: rgba(204,204,220,.2);
   --border-strong: rgba(204,204,220,.3);
   --text: #ccccdc;
+  --logo-frame: #EFE6D2;
   --muted: rgba(204,204,220,.65);
   --disabled: rgba(204,204,220,.6);
 
@@ -76,6 +77,7 @@
   --border-medium: rgba(36,41,46,.3);
   --border-strong: rgba(36,41,46,.4);
   --text: #24292e;
+  --logo-frame: #1E2A24;
   --muted: rgba(36,41,46,.75);
   --disabled: rgba(36,41,46,.64);
 

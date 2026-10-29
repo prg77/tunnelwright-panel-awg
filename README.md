@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="branding/tunnelwright-emblem.svg">
+    <img src="branding/tunnelwright-emblem-light.svg" width="160" alt="Tunnelwright">
+  </picture>
+</p>
+
 # Tunnelwright Panel AWG
 
 Панель управления VPN на [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-go)
@@ -82,7 +89,7 @@ curl -fsSL https://raw.githubusercontent.com/prg77/tunnelwright-panel-awg/main/i
 
 | Флаг | Что делает |
 |---|---|
-| `--version v1.0.0` | установить конкретный релиз |
+| `--version v1.0.1` | установить конкретный релиз |
 | `--channel main` | установить ветку без релиза |
 | `--build-local` | собрать образы на сервере вместо GHCR |
 | `--reuse` | переустановка с сохранёнными параметрами, без вопросов |
@@ -125,6 +132,7 @@ panel/                  panel-api (FastAPI + SQLite), образ ghcr.io/prg77/t
 node/                   node-agent (wg-easy API, tc-лимиты, метрики), образ ghcr.io/prg77/tunnelwright-node
 host/                   команды хоста: tunnelwright, продление сертификата, watchdog
 docs/                   архитектура, Portainer
+branding/               логотип: SVG, PNG, favicon
 ```
 
 Архитектура — [docs/architecture.md](docs/architecture.md).

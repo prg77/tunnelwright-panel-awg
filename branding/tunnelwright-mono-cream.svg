@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512">
+  <title>Tunnelwright</title>
+  <defs>
+    <clipPath id="tw-m-cream"><polygon points="50,12 88,89 12,89"/></clipPath>
+    <mask id="tw-cut-cream"><rect width="100" height="100" fill="#fff"/><path d="M42 91V79a8 8 0 0 1 16 0V91Z" fill="#000"/><path d="M60 40L58 52L64 60L61 70L68 90M33 70L30 76L34 80L30 90M72 54L70 64L75 72M54 22L49 40L52 46L45 58L49 64L41 76L43 90" fill="none" stroke="#000" stroke-width="1.6" stroke-linejoin="round"/></mask>
+  </defs>
+  <g clip-path="url(#tw-m-cream)" mask="url(#tw-cut-cream)">
+    <polygon points="16,90 28,66 33,70 44,40 47,44 54,22 60,40 64,36 72,54 76,52 86,90" fill="#EFE6D2"/>
+  </g>
+  <polygon points="50,5 93,92 7,92" fill="none" stroke="#EFE6D2" stroke-width="3.4" stroke-linejoin="miter"/>
+</svg>
