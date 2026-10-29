@@ -1,0 +1,79 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version matches tag
+        run: |
+          echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
+          test "v$(cat VERSION)" = "${GITHUB_REF_NAME}" || { echo "VERSION ($(cat VERSION)) != tag (${GITHUB_REF_NAME})"; exit 1; }
+
+      - name: Release notes
+        run: bash .github/scripts/release-notes.sh "${GITHUB_REF_NAME}" > "${RUNNER_TEMP}/notes.md"
+
+      - name: Archive + SHA256SUMS
+        run: |
+          name="tunnelwright-panel-awg-${GITHUB_REF_NAME}"
+          git archive --format=tar.gz --prefix="${name}/" -o "${name}.tar.gz" HEAD
+          sha256sum "${name}.tar.gz" > SHA256SUMS
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Web image → GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: web
+          platforms: linux/amd64,linux/arm64
+          build-args: APP_VERSION=${{ env.VERSION }}
+          push: true
+          tags: |
+            ghcr.io/prg77/tunnelwright-web:${{ env.VERSION }}
+            ghcr.io/prg77/tunnelwright-web:latest
+
+      - name: panel-api image → GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: panel
+          build-contexts: node=node
+          platforms: linux/amd64,linux/arm64
+          build-args: APP_VERSION=${{ env.VERSION }}
+          push: true
+          tags: |
+            ghcr.io/prg77/tunnelwright-api:${{ env.VERSION }}
+            ghcr.io/prg77/tunnelwright-api:latest
+
+      - name: node-agent image → GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: node
+          platforms: linux/amd64,linux/arm64
+          build-args: APP_VERSION=${{ env.VERSION }}
+          push: true
+          tags: |
+            ghcr.io/prg77/tunnelwright-node:${{ env.VERSION }}
+            ghcr.io/prg77/tunnelwright-node:latest
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            "tunnelwright-panel-awg-${GITHUB_REF_NAME}.tar.gz" SHA256SUMS \
+            --title "Tunnelwright Panel AWG ${GITHUB_REF_NAME}" --notes-file "${RUNNER_TEMP}/notes.md"

@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# Tunnelwright Panel AWG — управление (amnezia-ctl — ссылка на эту команду)
+BASE_DIR="/opt/tunnelwright"
+COMPOSE=(docker compose -f "${BASE_DIR}/docker-compose.yml" -p tunnelwright)
+
+cd "$BASE_DIR" 2>/dev/null || { echo "Tunnelwright Panel AWG не установлен (${BASE_DIR})"; exit 1; }
+
+case "${1:-help}" in
+  start)    "${COMPOSE[@]}" up -d; echo "▶ Tunnelwright Panel AWG запущен" ;;
+  stop)     "${COMPOSE[@]}" down; echo "⏹ Tunnelwright Panel AWG остановлен" ;;
+  restart)  "${COMPOSE[@]}" restart; echo "🔄 Tunnelwright Panel AWG перезапущен" ;;
+  status)   "${COMPOSE[@]}" ps ;;
+  logs)     shift; "${COMPOSE[@]}" logs -f --tail=100 "$@" ;;
+  version)  cat "${BASE_DIR}/current/VERSION" 2>/dev/null || echo "неизвестно" ;;
+  update)
+    # Обновление из GitHub: последний релиз или указанная версия
+    [[ -f "${BASE_DIR}/current/install.sh" ]] || { echo "✗ Нет ${BASE_DIR}/current/install.sh"; exit 1; }
+    if [[ -n "${2:-}" ]]; then
+      bash "${BASE_DIR}/current/install.sh" --version "$2" --reuse
+    else
+      bash "${BASE_DIR}/current/install.sh" --reuse
+    fi ;;
+  rollback)
+    PREV=$(cat "${BASE_DIR}/.previous" 2>/dev/null || true)
+    [[ -n "$PREV" && -d "${BASE_DIR}/releases/$PREV" ]] || { echo "✗ Предыдущий релиз не найден"; exit 1; }
+    CUR=$(basename "$(readlink -f "${BASE_DIR}/current")")
+    ln -sfn "${BASE_DIR}/releases/$PREV" "${BASE_DIR}/current"
+    echo "$CUR" > "${BASE_DIR}/.previous"
+    echo "↩ Откат: $CUR → $PREV"
+    bash "${BASE_DIR}/current/installer/setup.sh" --reuse ;;
+  rebuild)  bash "${BASE_DIR}/current/installer/setup.sh" --reuse --build-local ;;
+  local-vpn)
+    # VPN-нода на сервере панели: off — убрать (клиенты остаются на удалённых нодах), on — поставить
+    case "${2:-}" in
+      on)  bash "${BASE_DIR}/current/installer/setup.sh" --reuse --local-vpn ;;
+      off) if [[ "${3:-}" != "--yes" ]]; then
+             read -rp "VPN на этом сервере будет остановлен, его профили клиентов удалятся из панели (тома Docker сохранятся). Продолжить? [y/N]: " ok </dev/tty
+             [[ "${ok,,}" =~ ^(y|yes|д|да)$ ]] || { echo "Отменено"; exit 1; }
+           fi
+           bash "${BASE_DIR}/current/installer/setup.sh" --reuse --no-local-vpn ;;
+      *)   echo "Использование: tunnelwright local-vpn on|off [--yes]"; exit 1 ;;
+    esac ;;
+  reset-admin)
+    # Потерян пароль или телефон с 2FA: новый пароль, 2FA выключена
+    docker exec tunnelwright-api python -m app.cli reset-admin ;;
+  cert)     /usr/local/bin/tunnelwright-cert --force ;;
+  backup)   docker exec tunnelwright-api python -c \
+              "import asyncio,json;from app import db,backup;db.connect();print(json.dumps(asyncio.run(backup.run()),ensure_ascii=False))" ;;
+  restore)
+    # Восстановление из зашифрованного архива бэкапа: панель, ключи VPN этого сервера, лимиты.
+    # Удалённые ноды хранят свои данные сами; переустановленную ноду восстанавливает панель
+    # (Ноды → Обновить → «восстановить данные из бэкапа»).
+    # Без вопросов: TUNNELWRIGHT_BACKUP_PASSWORD=… tunnelwright restore файл.zip --yes
+    ARCHIVE="${2:-}"; YES="${3:-}"
+    [[ -f "$ARCHIVE" ]] || { echo "Использование: tunnelwright restore <tunnelwright-backup-….zip> [--yes]"; exit 1; }
+    IMG=$(docker inspect -f '{{.Config.Image}}' tunnelwright-api 2>/dev/null) || { echo "✗ Панель не установлена"; exit 1; }
+    PW="${TUNNELWRIGHT_BACKUP_PASSWORD:-}"
+    [[ -n "$PW" ]] || { read -rsp "Пароль бэкапа: " PW </dev/tty; echo; }
+    TMP=$(mktemp -d); chmod 700 "$TMP"
+    trap 'rm -rf "$TMP"' EXIT
+    if ! printf '%s\n' "$PW" | docker run --rm -i -v "$(readlink -f "$ARCHIVE")":/b.zip:ro -v "$TMP":/out \
+         "$IMG" python -m app.cli restore-extract /b.zip /out; then
+      echo "✗ Архив не распакован"; exit 1
+    fi
+    [[ -s "$TMP/panel/panel.db" ]] || { echo "✗ В архиве нет panel.db"; exit 1; }
+    LOCAL_ID=$(cat "$TMP/local-node" 2>/dev/null || true)
+    NODE_DIR=""; [[ -n "$LOCAL_ID" && -s "$TMP/nodes/$LOCAL_ID/wg-easy.db" ]] && NODE_DIR="$TMP/nodes/$LOCAL_ID"
+    HAS_VPN=no; grep -q '^  wg-easy:' "${BASE_DIR}/docker-compose.yml" && HAS_VPN=yes
+    if [[ "$HAS_VPN" == yes && -z "$NODE_DIR" ]]; then
+      echo "⚠ В бэкапе нет данных VPN этого сервера — профили клиентов на нём будут созданы заново (новые ключи)"
+    elif [[ "$HAS_VPN" == no && -n "$NODE_DIR" ]]; then
+      echo "⚠ В бэкапе есть VPN этого сервера, но сейчас он выключен. Чтобы вернуть его ключи:"
+      echo "  tunnelwright local-vpn on, затем повторите restore"
+      NODE_DIR=""
+    fi
+    if [[ "$YES" != "--yes" ]]; then
+      read -rp "Текущие данные панели$([[ -n "$NODE_DIR" ]] && echo " и VPN") будут заменены данными из бэкапа. Продолжить? [y/N]: " ok </dev/tty
+      [[ "${ok,,}" =~ ^(y|yes|д|да)$ ]] || { echo "Отменено"; exit 1; }
+    fi
+    "${COMPOSE[@]}" down --timeout 15
+    vol() { docker volume inspect -f '{{.Mountpoint}}' "$1"; }
+    D=$(vol tunnelwright_data)
+    rm -f "$D"/panel.db "$D"/panel.db-wal "$D"/panel.db-shm
+    install -m 600 "$TMP/panel/panel.db" "$D/panel.db"
+    if [[ -n "$NODE_DIR" ]]; then
+      W=$(vol tunnelwright_wg); N=$(vol tunnelwright_node)
+      rm -f "$W"/wg0.conf
+      install -m 644 "$NODE_DIR/wg-easy.db" "$W/wg-easy.db"
+      for f in limits.json wg-easy-admin.json uids.json; do
+        [[ -f "$NODE_DIR/$f" ]] && install -m 600 "$NODE_DIR/$f" "$N/$f"
+      done
+      rm -rf "$N/import"
+    fi
+    "${COMPOSE[@]}" up -d
+    echo "✓ Восстановлено из $(basename "$ARCHIVE"). Проверьте: tunnelwright status"
+    echo "  Удалённые ноды подключатся сами; если сервер ноды переустанавливался —"
+    echo "  Ноды → Обновить → «восстановить данные из бэкапа»." ;;
+  *)
+    cat <<'EOF'
+
+Tunnelwright Panel AWG — управление сервисом
+
+Использование: tunnelwright <команда>
+
+  start | stop | restart   Запуск, остановка, перезапуск контейнеров
+  status                   Статус контейнеров
+  logs [сервис]            Логи (сервисы: wg-easy, node-agent, panel-api, web)
+  update [vX]              Обновить из GitHub (последний релиз или vX)
+  rollback                 Вернуть предыдущий релиз
+  version                  Установленная версия
+  rebuild                  Пересобрать образы на сервере
+  local-vpn on|off         VPN-нода на сервере панели (по умолчанию — без неё)
+  reset-admin              Новый пароль администратора, 2FA выключается
+  cert                     Перевыпустить TLS-сертификат панели
+  backup                   Создать бэкап сейчас (и отправить в Telegram по настройке)
+  restore <архив.zip>      Восстановить панель и VPN из бэкапа
+
+EOF
+    ;;
+esac

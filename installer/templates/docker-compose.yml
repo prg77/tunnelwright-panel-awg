@@ -1,0 +1,109 @@
+# Tunnelwright Panel AWG @@APP_VERSION@@ — сгенерировано установщиком, не редактируйте вручную
+name: tunnelwright
+
+networks:
+  tunnelwright:
+    name: tunnelwright
+
+volumes:
+  wg:      { name: tunnelwright_wg }      # wg-easy: ключи, клиенты, параметры AmneziaWG
+  node:    { name: tunnelwright_node }    # node-agent: учётка wg-easy, лимиты
+  data:    { name: tunnelwright_data }    # panel-api: panel.db
+
+services:
+  # >>> local-vpn — VPN на сервере панели (без него блок удаляется установщиком)
+  # ── VPN: WireGuard/AmneziaWG (userspace) + API (только localhost) ──
+  wg-easy:
+    image: @@WG_EASY_IMAGE@@
+    container_name: tunnelwright-wg
+    restart: unless-stopped
+    environment:
+      EXPERIMENTAL_AWG: "true"
+      OVERRIDE_AUTO_AWG: "awg"      # amneziawg-go, модуль ядра на хосте не нужен
+      DISABLE_IPV6: "true"
+      INSECURE: "true"              # API wg-easy доступен только agent'у по localhost
+      HOST: "127.0.0.1"
+      PORT: "51821"
+    volumes:
+      - wg:/etc/wireguard
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add: [NET_ADMIN, SYS_MODULE]
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+    ports:
+      - "@@WG_PORT@@:@@WG_PORT@@/udp"
+    networks: [tunnelwright]
+    healthcheck:                    # встроенная проверка образа вызывает wg, а не awg
+      test: ["CMD-SHELL", "awg show | grep -q interface"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+
+  # ── Агент ноды: в сетевом namespace wg-easy (tc-лимиты, API ноды на :8710) ──
+  node-agent:
+    image: @@NODE_IMAGE@@
+    build: { context: @@BUILD_DIR@@/node, args: { APP_VERSION: "@@APP_VERSION@@" } }
+    container_name: tunnelwright-node
+    restart: unless-stopped
+    network_mode: "service:wg-easy"
+    cap_add: [NET_ADMIN]
+    environment:
+      WG_HOST: "@@WG_HOST@@"
+      WG_PORT: "@@WG_PORT@@"
+      WG_DNS: "@@WG_DNS@@"
+    volumes:
+      - node:/data
+      - wg:/wg:ro                   # БД wg-easy — только чтение, для бэкапа
+      - @@SECRETS_DIR@@/node:/run/tunnelwright:ro
+    depends_on:
+      wg-easy: { condition: service_started, restart: true }
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+
+  # <<< local-vpn
+
+  # ── Бэкенд панели ──
+  panel-api:
+    image: @@API_IMAGE@@
+    build:
+      context: @@BUILD_DIR@@/panel
+      additional_contexts: { node: @@BUILD_DIR@@/node }
+      args: { APP_VERSION: "@@APP_VERSION@@" }
+    container_name: tunnelwright-api
+    restart: unless-stopped
+    environment:
+      LOCAL_NODE_URL: "@@LOCAL_NODE_URL@@"     # пусто — VPN на сервере панели не установлен
+      LOCAL_NODE_TOKEN_FILE: "/run/tunnelwright/node.token"
+      PANEL_WG_HOST: "@@WG_HOST@@"
+      PANEL_WEB_PORT: "@@WEB_PORT@@"
+      PANEL_WG_PORT: "@@WG_PORT@@"
+      PANEL_NODE_IMAGE: "@@NODE_IMAGE@@"          # для установки удалённых нод
+      PANEL_WG_EASY_IMAGE: "@@WG_EASY_IMAGE@@"
+    volumes:
+      - data:/data
+      - @@SECRETS_DIR@@/panel:/run/tunnelwright
+      - @@LEGACY_IMPORT_DIR@@:/legacy:ro
+    networks: [tunnelwright]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8700/api/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+
+  # ── Веб: React + nginx (HTTPS) ──
+  web:
+    image: @@WEB_IMAGE@@
+    build: { context: @@BUILD_DIR@@/web, args: { APP_VERSION: "@@APP_VERSION@@" } }
+    container_name: tunnelwright-web
+    restart: unless-stopped
+    ports:
+      - "@@WEB_PORT@@:443"
+    volumes:
+      - @@TLS_DIR@@:/etc/tunnelwright/tls:ro
+    networks: [tunnelwright]
+    depends_on: [panel-api]
+    logging: { driver: json-file, options: { max-size: "5m", max-file: "3" } }

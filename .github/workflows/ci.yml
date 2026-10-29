@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: for f in install.sh installer/setup.sh installer/lib/*.sh host/* web/tls.sh panel/app/remote/*.sh .github/scripts/*.sh; do bash -n "$f"; done
+      - name: ShellCheck (errors only)
+        run: shellcheck -S error -x install.sh installer/setup.sh installer/lib/*.sh host/* web/tls.sh panel/app/remote/*.sh .github/scripts/*.sh
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.14.10" }
+      - name: panel-api tests
+        working-directory: panel
+        run: |
+          pip install -q -r requirements.txt pytest==9.2.0
+          python -m pytest -q -p no:warnings
+      - name: node-agent syntax
+        working-directory: node
+        run: |
+          pip install -q -r requirements.txt
+          python -m compileall -q app && python -c "import app.main"
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "24.22.1" }
+      - name: Lint and build
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run lint
+          npm run build
+
+  images:
+    runs-on: ubuntu-latest
+    needs: [shell, python, web]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build images
+        run: |
+          V="$(cat VERSION)"
+          docker build --build-arg APP_VERSION="$V" -t tunnelwright-web:ci web
+          docker build --build-arg APP_VERSION="$V" --build-context node=node -t tunnelwright-api:ci panel
+          docker build --build-arg APP_VERSION="$V" -t tunnelwright-node:ci node

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Tunnelwright Panel AWG — watchdog контейнеров (cron, каждые 5 минут).
+# Состояние нод и Telegram-уведомления ведёт panel-api; здесь — только подъём упавших контейнеров
+# (например, если Docker перезапустили, а контейнер остался остановленным).
+BASE_DIR="/opt/tunnelwright"
+LOG="/var/log/tunnelwright/watchdog.log"
+COMPOSE=(docker compose -f "${BASE_DIR}/docker-compose.yml" -p tunnelwright)
+ts() { date '+%Y-%m-%d %H:%M:%S'; }
+
+# Сервисы берём из docker-compose.yml: VPN на сервере панели может быть не установлен
+mapfile -t want < <("${COMPOSE[@]}" config --services 2>/dev/null | sort)
+mapfile -t running < <("${COMPOSE[@]}" ps --status running --services 2>/dev/null | sort)
+[[ ${#want[@]} -gt 0 ]] || exit 0
+down=$(comm -23 <(printf '%s\n' "${want[@]}") <(printf '%s\n' "${running[@]}") | tr '\n' ' ')
+[[ -z "${down// /}" ]] && exit 0
+
+echo "[$(ts)] не работают: ${down}— docker compose up -d" >> "$LOG"
+"${COMPOSE[@]}" up -d >> "$LOG" 2>&1

@@ -1,0 +1,7 @@
+import React, { useState, useEffect, useRef, useCallback } from "react";
+
+export const fmtBytes = (b) => { if(!b)return"0 B"; const u=["B","KB","MB","GB","TB"],i=Math.floor(Math.log(Math.max(b,1))/Math.log(1024)); return(b/Math.pow(1024,i)).toFixed(i>0?2:0)+" "+u[Math.min(i,4)]; };
+export const fmtGB   = (b) => { if(!b)return"0 GB"; const gb=b/1073741824; return gb<0.01?(b/1048576).toFixed(2)+" MB":gb.toFixed(2)+" GB"; };
+export const fmtHS   = (ts) => { if(!ts)return"—"; const d=Math.floor((Date.now()-new Date(ts))/1000); if(d<60)return d+"с"; if(d<3600)return Math.floor(d/60)+"м"; if(d<86400)return Math.floor(d/3600)+"ч"; return Math.floor(d/86400)+"д"; };
+export const devIcon = (n) => { const l=(n||"").toLowerCase(); if(/iphone|ios/.test(l))return"📱"; if(/android/.test(l))return"📲"; if(/mac|apple/.test(l))return"💻"; if(/ipad/.test(l))return"📋"; if(/win|pc/.test(l))return"🖥"; if(/linux|ubuntu|server/.test(l))return"⚙️"; if(/tv/.test(l))return"📺"; return"📡"; };
+export const aColor  = (n) => { const c=["#5794f2","#73bf69","#ff9830","#b877d9","#f2495c","#8ab8ff","#fade2a","#56a64b"]; let h=0; for(let i=0;i<(n||"").length;i++)h=(n||"").charCodeAt(i)+((h<<5)-h); return c[Math.abs(h)%c.length]; };

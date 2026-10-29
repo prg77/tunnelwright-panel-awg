@@ -1,0 +1,109 @@
+/*
+ * Дизайн-токены панели в стиле Grafana (Saga). Тема выбирается атрибутом data-theme на <html>
+ * (dark | light), без атрибута действует тёмная. Функциональность тем одинакова — меняется только цвет.
+ *
+ * Старые имена (--surface, --cyan, --amber…) оставлены псевдонимами: на них опираются inline-стили.
+ */
+
+:root {
+  --mono: 'Roboto Mono','JetBrains Mono',monospace;
+  --sans: 'Inter','Helvetica','Arial',sans-serif;
+  --radius: 2px;        /* кнопки, поля, бейджи */
+  --radius-lg: 4px;     /* панели, модальные окна */
+  --nav-indicator: linear-gradient(0deg,#f55f3e 0%,#ff8833 100%);
+
+  /* Классическая палитра графиков Grafana — одна для обеих тем */
+  --viz-green: #73bf69;
+  --viz-blue: #5794f2;
+  --viz-orange: #ff9830;
+  --viz-purple: #b877d9;
+  --viz-yellow: #fade2a;
+  --viz-red: #f2495c;
+}
+
+/* ── Тёмная ─────────────────────────────────────────────────── */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111217;                       /* canvas */
+  --surface: #181b1f;                  /* панели, меню */
+  --surface2: #22252b;                 /* вторичный фон, поля */
+  --input-bg: #111217;
+  --border: rgba(204,204,220,.12);     /* weak */
+  --border-medium: rgba(204,204,220,.2);
+  --border-strong: rgba(204,204,220,.3);
+  --text: #ccccdc;
+  --muted: rgba(204,204,220,.65);
+  --disabled: rgba(204,204,220,.6);
+
+  --primary: #3d71d9;
+  --primary-hover: #5a87e1;
+  --cyan: #6e9fff;                     /* primary text */
+  --cyan-rgb: 110 159 255;
+  --amber: #ff9830;
+  --success: #6ccf8e;
+  --success-main: #1a7f4b;
+  --warning: #fbad37;
+  --error: #ff5286;
+  --error-main: #d10e5c;
+  --purple: #b877d9;
+
+  --action-hover: rgba(204,204,220,.16);
+  --action-selected: rgba(204,204,220,.12);
+  --row-hover: rgba(204,204,220,.06);
+  --nav-hover: rgba(204,204,220,.08);
+  --nav-active-bg: rgba(204,204,220,.12);
+  --shadow: 0 4px 8px rgba(1,4,9,.75);
+  --overlay-bg: rgba(0,0,0,.6);
+  --chart-grid: rgba(204,204,220,.07);
+  --chart-axis: rgba(204,204,220,.2);
+  --chart-text: rgba(204,204,220,.65);
+  --wmd-bg: transparent;
+  --wmd-bar: rgba(204,204,220,.12);
+  --status-off-bg: rgba(204,204,220,.08);
+  --tooltip-bg: #22252b;
+  --tooltip-time: rgba(204,204,220,.65);
+}
+
+/* ── Светлая ────────────────────────────────────────────────── */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f5f5;
+  --surface: #ffffff;
+  --surface2: #f4f5f5;
+  --input-bg: #ffffff;
+  --border: rgba(36,41,46,.12);
+  --border-medium: rgba(36,41,46,.3);
+  --border-strong: rgba(36,41,46,.4);
+  --text: #24292e;
+  --muted: rgba(36,41,46,.75);
+  --disabled: rgba(36,41,46,.64);
+
+  --primary: #3871dc;
+  --primary-hover: #2e62c4;
+  --cyan: #1f62e0;
+  --cyan-rgb: 31 98 224;
+  --amber: #c55400;
+  --success: #0a764e;
+  --success-main: #1b855e;
+  --warning: #bd4b00;
+  --error: #cf0e5b;
+  --error-main: #e0226e;
+  --purple: #8f3bb8;
+
+  --action-hover: rgba(36,41,46,.12);
+  --action-selected: rgba(36,41,46,.08);
+  --row-hover: rgba(36,41,46,.04);
+  --nav-hover: rgba(36,41,46,.06);
+  --nav-active-bg: rgba(36,41,46,.08);
+  --shadow: 0 4px 8px rgba(24,26,27,.2);
+  --overlay-bg: rgba(208,209,211,.6);
+  --chart-grid: rgba(36,41,46,.08);
+  --chart-axis: rgba(36,41,46,.25);
+  --chart-text: rgba(36,41,46,.75);
+  --wmd-bg: transparent;
+  --wmd-bar: rgba(36,41,46,.12);
+  --status-off-bg: rgba(36,41,46,.06);
+  --tooltip-bg: #ffffff;
+  --tooltip-time: rgba(36,41,46,.75);
+}

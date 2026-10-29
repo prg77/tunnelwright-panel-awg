@@ -1,0 +1,52 @@
+# Tunnelwright Panel AWG — стек Portainer: только панель (NAS, домашний сервер).
+# VPN работает на удалённых нодах, их панель ставит и обновляет сама по SSH (Ноды → Добавить).
+#
+# Portainer → Stacks → Add stack → Web editor (или Repository: deploy/portainer/docker-compose.yml),
+# переменные — в разделе Environment variables (все необязательные, см. docs/portainer.md):
+#   WEB_PORT           порт панели на NAS (58821)
+#   PANEL_HOST         адрес панели снаружи: DDNS-имя или IP — для сертификата и уведомлений
+#   PANEL_TLS          on — HTTPS с самоподписанным сертификатом; off — HTTP за обратным прокси NAS
+#   PANEL_PUBLIC_URL   адрес за обратным прокси, например https://vpn.example.com (ссылки из Telegram-бота)
+#
+# Образы — всегда последний релиз (latest), те же, что у установки на сервер. Обновление:
+# Stacks → tunnelwright → Update the stack с «Re-pull image». Агенты нод панель обновит сама.
+# Пароль администратора при первом запуске — в логе контейнера tunnelwright-api.
+name: tunnelwright
+
+volumes:
+  data: { name: tunnelwright_data }   # panel.db, бэкапы
+  tls:  { name: tunnelwright_tls }    # самоподписанный сертификат (PANEL_TLS=on)
+
+services:
+  panel-api:
+    image: ghcr.io/prg77/tunnelwright-api:latest
+    container_name: tunnelwright-api
+    restart: unless-stopped        # нужен и для восстановления из бэкапа: panel-api перезапускается
+    environment:
+      LOCAL_NODE_URL: ""           # VPN на NAS нет — только удалённые ноды
+      PANEL_WG_HOST: ${PANEL_HOST:-}
+      PANEL_WEB_PORT: ${WEB_PORT:-58821}
+      PANEL_PUBLIC_URL: ${PANEL_PUBLIC_URL:-}
+      PANEL_NODE_IP_LOCK: "false"  # домашний IP меняется — ноды не привязываются к адресу панели
+    volumes:
+      - data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8700/api/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+
+  web:
+    image: ghcr.io/prg77/tunnelwright-web:latest
+    container_name: tunnelwright-web
+    restart: unless-stopped
+    environment:
+      PANEL_TLS: ${PANEL_TLS:-on}
+      PANEL_HOST: ${PANEL_HOST:-}
+    ports:
+      - "${WEB_PORT:-58821}:443"
+    volumes:
+      - tls:/etc/tunnelwright/tls
+    depends_on: [panel-api]
+    logging: { driver: json-file, options: { max-size: "5m", max-file: "3" } }
