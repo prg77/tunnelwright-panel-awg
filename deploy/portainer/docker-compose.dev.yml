@@ -21,8 +21,8 @@ services:
     environment:
       LOCAL_NODE_URL: ""
       PANEL_WG_HOST: ${PANEL_HOST:-}
-      PANEL_WEB_PORT: "https://dev.prgn.space"
-      PANEL_PUBLIC_URL: "https://dev.prgn.space"
+      PANEL_WEB_PORT: ${DEV_WEB_PORT:-58831}
+      PANEL_PUBLIC_URL: ${PANEL_PUBLIC_URL:-}
       PANEL_USER_URL: ${PANEL_USER_URL:-}
       PANEL_NODE_IP_LOCK: "false"
       PANEL_NODE_IMAGE: ghcr.io/prg77/tunnelwright-node:dev   # ноды, установленные из тестовой панели
@@ -40,8 +40,8 @@ services:
     container_name: tunnelwright-dev-web
     restart: unless-stopped
     environment:
-      PANEL_TLS: "off"
-      PANEL_HOST: "dev.prgn.space"
+      PANEL_TLS: ${PANEL_TLS:-on}
+      PANEL_HOST: ${PANEL_HOST:-}
     ports:
       - "${DEV_WEB_PORT:-58831}:443"
     volumes:
