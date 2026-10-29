@@ -422,6 +422,18 @@ def page_html(d: dict, body_html: str, show_qr: bool, token: str = "", preview: 
             f'{stats}<div class="panel"><div class="pb tpl">{body_html}</div></div>{access}</main></body></html>')
 
 
+def message_html(title: str, text: str) -> str:
+    """Страница-сообщение (ссылка недействительна, доступ не активен…) в том же оформлении."""
+    e = html.escape
+    portal = db.get_setting("portal_name", "Private World")
+    return (f'<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<meta name="robots" content="noindex,nofollow"><title>{e(portal)} — {e(title)}</title>'
+            f'<style>{_CSS}</style></head><body><div class="top">{_LOGO}<b>{e(portal)}</b></div>'
+            f'<main><div class="panel"><div class="ph">{e(title)}</div><div class="pb">{e(text)}</div></div>'
+            f'</main></body></html>')
+
+
 async def render(user_id: int, token: str = "", template: str | None = None, preview: bool = False) -> str:
     s = settings()
     d = await page_data(user_id)

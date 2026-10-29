@@ -14,10 +14,8 @@ HEADERS = {"Content-Security-Policy": userpage.CSP, "Cache-Control": "no-store",
            "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex, nofollow"}
 
 
-def _plain(code: int, text: str) -> HTMLResponse:
-    return HTMLResponse(f'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
-                        f'<title>{code}</title><p style="font:16px system-ui;margin:40px;text-align:center">{text}</p>',
-                        status_code=code, headers=HEADERS)
+def _plain(code: int, title: str, text: str) -> HTMLResponse:
+    return HTMLResponse(userpage.message_html(title, text), status_code=code, headers=HEADERS)
 
 
 def _user(token: str, request: Request) -> int | None:
@@ -52,9 +50,9 @@ async def user_page(token: str, request: Request):
     try:
         uid = _user(token, request)
     except HTTPException:
-        return _plain(429, "Слишком много запросов. Попробуйте позже.")
+        return _plain(429, "Слишком много запросов", "Попробуйте открыть страницу позже.")
     if uid is None:
-        return _plain(404, "Ссылка недействительна. Запросите новую у администратора.")
+        return _plain(404, "Ссылка недействительна", "Запросите новую ссылку у администратора.")
     return HTMLResponse(await userpage.render(uid, token), headers=HEADERS)
 
 
@@ -63,19 +61,19 @@ async def user_config(token: str, request: Request, c: int | None = None, node: 
     try:
         uid = _user(token, request)
     except HTTPException:
-        return _plain(429, "Слишком много запросов. Попробуйте позже.")
+        return _plain(429, "Слишком много запросов", "Попробуйте открыть страницу позже.")
     if uid is None:
-        return _plain(404, "Ссылка недействительна. Запросите новую у администратора.")
+        return _plain(404, "Ссылка недействительна", "Запросите новую ссылку у администратора.")
     d = await userpage.page_data(uid)
     dev = userpage.device(d, c)     # только конфиги этого пользователя
     if not dev:
-        return _plain(404, "Конфигурация не найдена.")
+        return _plain(404, "Конфигурация не найдена", "Такого устройства нет на вашей странице — откройте её заново по своей ссылке.")
     if not userpage.can_download(d, dev):
-        return _plain(403, "Доступ сейчас не активен — обратитесь к администратору.")
+        return _plain(403, "Доступ не активен", "Конфигурация сейчас недоступна — обратитесь к администратору.")
     try:
         text, name, _ = await routing.client_config(dev["id"], node)
     except (nodes.NodeError, ValueError):
-        return _plain(503, "Конфигурация временно недоступна. Попробуйте позже.")
+        return _plain(503, "Сервер временно недоступен", "Конфигурация сейчас не загружается — попробуйте позже.")
     audit.log(request, "user-page", "user_config_download", str(dev["id"]), name=name, node=node)
     return PlainTextResponse(text, headers={**HEADERS, "Content-Disposition": routing.attachment(name, f"client-{dev['id']}")})
 
