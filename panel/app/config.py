@@ -35,6 +35,9 @@ WG_PORT = int(os.environ.get("PANEL_WG_PORT", "58820"))
 # Адрес панели снаружи (ссылки пользователей из Telegram-бота). За обратным прокси NAS он другой,
 # например https://vpn.example.com — тогда задаётся явно
 PUBLIC_URL = (os.environ.get("PANEL_PUBLIC_URL") or f"https://{WG_HOST}:{WEB_PORT}").rstrip("/")
+# Отдельный адрес страниц пользователей (/u/<токен>), например https://example.com при панели
+# на https://panel.example.com. Пусто — ссылки ведут на адрес панели
+USER_URL = (os.environ.get("PANEL_USER_URL") or "").rstrip("/")
 
 # Удалённые ноды: образы, которые ставятся на ноду (совпадают с локальной установкой)
 NODE_IMAGE = os.environ.get("PANEL_NODE_IMAGE", f"ghcr.io/prg77/tunnelwright-node:{APP_VERSION}")

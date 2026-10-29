@@ -95,3 +95,61 @@ def test_template_settings_and_preview(env):
     s = c.put("/api/user-page", json={"template": s["default_template"]}).json()
     assert not s["custom"]
     assert c.put("/api/user-page", json={"template": "x" * 20001}).status_code == 400
+
+
+# ── адрес ссылок: отдельный домен для страниц пользователей ──
+def test_user_url_setting_and_host_restriction(client, monkeypatch):
+    login(client)
+    assert client.get("/api/user-page").json()["user_url"] == ""
+    assert client.put("/api/user-page", json={"user_url": "https://example.com/path"}).status_code == 400
+    assert client.put("/api/user-page", json={"user_url": "ftp://example.com"}).status_code == 400
+    r = client.put("/api/user-page", json={"user_url": "https://Example.com/"})
+    assert r.status_code == 200 and r.json()["user_url"] == "https://example.com"
+    assert userpage.user_host() == "example.com"
+
+    # на домене ссылок: интерфейс (host-check для nginx) и API — нет, /u/ — да
+    other = {"Host": "example.com"}
+    assert client.get("/api/host-check", headers=other).status_code == 403
+    assert client.get("/api/clients", headers=other).status_code == 404
+    assert client.get("/u/ping", headers=other).text == "tunnelwright-user-page"
+    assert client.get("/u/" + "x" * 30, headers=other).status_code == 404   # обычная страница «ссылка недействительна»
+    # на адресе панели всё как раньше
+    assert client.get("/api/host-check", headers={"Host": "panel.example.com"}).status_code == 204
+    assert client.get("/api/clients", headers={"Host": "panel.example.com"}).status_code == 200
+
+    # пусто — ссылки снова на адресе панели, ограничения нет
+    assert client.put("/api/user-page", json={"user_url": ""}).json()["user_url"] == ""
+    assert userpage.user_host() is None
+    assert client.get("/api/host-check", headers=other).status_code == 204
+
+
+def test_user_url_initial_value_from_env(client, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "USER_URL", "https://example.com")
+    login(client)
+    assert client.get("/api/user-page").json()["user_url"] == "https://example.com"
+    client.put("/api/user-page", json={"user_url": ""})          # сохранённая настройка важнее переменной
+    assert client.get("/api/user-page").json()["user_url"] == ""
+
+
+def test_user_url_check(client, monkeypatch):
+    import httpx
+    from app.routers import userpage as router
+
+    class Fake:
+        def __init__(self, **kw): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        async def get(self, url):
+            if "good" in url:
+                return httpx.Response(200, text=router.PING)
+            if "down" in url:
+                raise httpx.ConnectError("refused")
+            return httpx.Response(404, text="nope")
+    monkeypatch.setattr(router.httpx, "AsyncClient", Fake)
+    login(client)
+    assert client.post("/api/user-page/check", json={"url": "https://good.example"}).json()["ok"] is True
+    bad = client.post("/api/user-page/check", json={"url": "https://other.example"}).json()
+    assert bad["ok"] is False and "404" in bad["message"]
+    assert client.post("/api/user-page/check", json={"url": "https://down.example"}).json()["ok"] is False
+    assert client.post("/api/user-page/check", json={"url": "not a url"}).status_code == 400

@@ -7,6 +7,8 @@
 #   PANEL_HOST         адрес панели снаружи: DDNS-имя или IP — для сертификата и уведомлений
 #   PANEL_TLS          on — HTTPS с самоподписанным сертификатом; off — HTTP за обратным прокси NAS
 #   PANEL_PUBLIC_URL   адрес за обратным прокси, например https://vpn.example.com (ссылки из Telegram-бота)
+#   PANEL_USER_URL     адрес ссылок клиентов, например https://example.com при панели на panel.example.com
+#                      (начальное значение; дальше меняется в «Настройки → Страница пользователя»)
 #
 # Образы — всегда последний релиз (latest), те же, что у установки на сервер. Обновление:
 # Stacks → tunnelwright → Update the stack с «Re-pull image». Агенты нод панель обновит сама.
@@ -27,6 +29,7 @@ services:
       PANEL_WG_HOST: ${PANEL_HOST:-}
       PANEL_WEB_PORT: ${WEB_PORT:-58821}
       PANEL_PUBLIC_URL: ${PANEL_PUBLIC_URL:-}
+      PANEL_USER_URL: ${PANEL_USER_URL:-}
       PANEL_NODE_IP_LOCK: "false"  # домашний IP меняется — ноды не привязываются к адресу панели
     volumes:
       - data:/data

@@ -5,8 +5,10 @@ import logging
 import os
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from . import audit, backup, config, db, security, tasks
+from . import userpage as userpage_mod
 from .routers import auth, backups, catalog, clients, nodes, quotas, system, userpage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -48,6 +50,17 @@ app.include_router(catalog.router)
 app.include_router(userpage.router)
 app.include_router(nodes.router)
 app.include_router(clients.router)
+
+
+@app.middleware("http")
+async def user_host_only_pages(request, call_next):
+    """Отдельный адрес страниц пользователей (настройка «Адрес ссылок») открывает только /u/:
+    API панели там отвечает 404. Сам интерфейс там не отдаёт nginx (auth_request → /api/host-check)."""
+    if request.url.path.startswith("/api/") and request.url.path != "/api/host-check":
+        host = (request.headers.get("host") or "").split(":")[0].lower()
+        if host and host == userpage_mod.user_host():
+            return JSONResponse({"detail": "not found"}, status_code=404)
+    return await call_next(request)
 
 
 @app.get("/api/health")

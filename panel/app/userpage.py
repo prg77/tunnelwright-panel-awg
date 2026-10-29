@@ -12,10 +12,11 @@ import time
 import zoneinfo
 from collections import defaultdict, deque
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 import segno
 
-from . import clients, db, nodes, quotas, routing
+from . import clients, config, db, nodes, quotas, routing
 
 SETTING = "user_page"
 TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{20,64}")
@@ -48,15 +49,36 @@ _misses: dict[str, deque] = defaultdict(deque)
 def settings() -> dict:
     s = db.get_setting(SETTING, {}) or {}
     return {"enabled": s.get("enabled", True), "template": s.get("template") or DEFAULT_TEMPLATE,
-            "show_qr": s.get("show_qr", True), "custom": bool(s.get("template"))}
+            "show_qr": s.get("show_qr", True), "custom": bool(s.get("template")),
+            # адрес ссылок: свой домен для страниц пользователей; пусто — адрес панели
+            "user_url": s["user_url"] if "user_url" in s else config.USER_URL}
 
 
-def save_settings(enabled=None, template=None, show_qr=None) -> dict:
+def normalize_url(url: str) -> str:
+    """https://example.com — схема и хост (порт можно), без пути. Пусто — сброс."""
+    url = (url or "").strip().rstrip("/")
+    if not url:
+        return ""
+    p = urlsplit(url)
+    if p.scheme not in ("https", "http") or not p.hostname or p.path or p.query or p.fragment or p.username:
+        raise ValueError("адрес ссылок — вида https://example.com, без пути")
+    return f"{p.scheme}://{p.netloc.lower()}"
+
+
+def user_host() -> str | None:
+    """Хост отдельного адреса страниц пользователей: на нём открываются только /u/."""
+    url = settings()["user_url"]
+    return urlsplit(url).hostname if url else None
+
+
+def save_settings(enabled=None, template=None, show_qr=None, user_url=None) -> dict:
     s = db.get_setting(SETTING, {}) or {}
     if enabled is not None:
         s["enabled"] = bool(enabled)
     if show_qr is not None:
         s["show_qr"] = bool(show_qr)
+    if user_url is not None:
+        s["user_url"] = normalize_url(user_url)
     if template is not None:
         template = template.replace("\r\n", "\n").strip()
         if len(template) > MAX_TEMPLATE:

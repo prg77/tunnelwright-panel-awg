@@ -20,22 +20,26 @@ export const UserLink = ({ client }) => {
   const [enabled, setEnabled] = useState(true);
   const [msg, setMsg] = useState("");
   const [confirmRegen, setConfirmRegen] = useState(false);
+  const [base, setBase] = useState(window.location.origin);   // отдельный адрес страниц пользователей, если задан
 
   useEffect(() => {
     let dead = false;
     Promise.all([api.userLinks(), api.userPage()])
-      .then(([links, page]) => { if (!dead) { setToken(links[client.id]?.token || null); setEnabled(page.enabled); } })
+      .then(([links, page]) => { if (!dead) {
+        setToken(links[client.id]?.token || null); setEnabled(page.enabled);
+        if (page.user_url) setBase(page.user_url);
+      } })
       .catch(e => { if (!dead) { setToken(null); setMsg(e.message); } });
     return () => { dead = true; };
   }, [client.id]);
 
-  const url = token ? `${window.location.origin}/u/${token}` : "";
+  const url = token ? `${base}/u/${token}` : "";
   const flash = (t) => { setMsg(t); setTimeout(() => setMsg(""), 2500); };
   const issue = async (regenerate) => {
     try {
       const r = await api.issueLink(client.id, regenerate);
       setToken(r.token); setConfirmRegen(false);
-      await copyText(`${window.location.origin}${r.path}`);
+      await copyText(`${base}${r.path}`);
       flash(regenerate ? "Новая ссылка скопирована — старая больше не работает" : "Ссылка создана и скопирована");
     } catch (e) { flash(e.message); }
   };

@@ -64,6 +64,7 @@ export const api = {
   userPage:    ()        => api.req("GET",    "/user-page"),
   saveUserPage:(s)       => api.req("PUT",    "/user-page", s),
   previewUserPage: (template) => api.req("POST", "/user-page/preview", {template}),
+  checkUserUrl: (url)    => api.req("POST", "/user-page/check", {url}),
   userLinks:   ()        => api.req("GET",    "/user-links"),
   issueLink:   (id, regenerate) => api.req("POST", `/clients/${id}/link${regenerate ? "?regenerate=true" : ""}`),
   revokeLink:  (id)      => api.req("DELETE", `/clients/${id}/link`),

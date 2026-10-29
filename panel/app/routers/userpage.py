@@ -1,8 +1,9 @@
 """Страница пользователя: публичные /u/<токен> и управление ссылками и шаблоном."""
 
-from fastapi import APIRouter, HTTPException, Request
+import httpx
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import audit, db, nodes, routing, userpage
 from ..security import Admin, client_ip
@@ -29,6 +30,23 @@ def _client(token: str, request: Request) -> int | None:
 
 
 # ── публичная часть ────────────────────────────────────────────
+PING = "tunnelwright-user-page"
+
+
+@router.get("/u/ping", include_in_schema=False)
+def user_page_ping():
+    """По этому ответу «Проверить» в настройках узнаёт, что адрес ссылок ведёт на эту панель.
+    Объявлен до /u/{token}: иначе «ping» считался бы неверным токеном."""
+    return PlainTextResponse(PING, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/api/host-check", include_in_schema=False)
+def host_check(request: Request):
+    """Для nginx (auth_request): на отдельном адресе страниц пользователей панель не открывается."""
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    return Response(status_code=403 if host and host == userpage.user_host() else 204)
+
+
 @router.get("/u/{token}", include_in_schema=False)
 async def user_page(token: str, request: Request):
     try:
@@ -64,6 +82,7 @@ class PageBody(BaseModel):
     enabled: bool | None = None
     show_qr: bool | None = None
     template: str | None = None
+    user_url: str | None = Field(default=None, max_length=200)
 
 
 @router.get("/api/user-page")
@@ -75,11 +94,36 @@ def get_page(_admin=Admin):
 @router.put("/api/user-page")
 def put_page(body: PageBody, request: Request, admin=Admin):
     try:
-        s = userpage.save_settings(body.enabled, body.template, body.show_qr)
+        s = userpage.save_settings(body.enabled, body.template, body.show_qr, body.user_url)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    audit.log(request, admin, "user_page_settings", enabled=s["enabled"], custom=s["custom"])
+    audit.log(request, admin, "user_page_settings", enabled=s["enabled"], custom=s["custom"],
+              **({"user_url": s["user_url"]} if body.user_url is not None else {}))
     return {**s, "default_template": userpage.DEFAULT_TEMPLATE, "placeholders": userpage.PLACEHOLDERS}
+
+
+class CheckBody(BaseModel):
+    url: str = Field(max_length=200)
+
+
+@router.post("/api/user-page/check")
+async def check_url(body: CheckBody, _admin=Admin):
+    """Открывается ли <адрес>/u/ping снаружи и отвечает ли там эта панель (с проверкой сертификата)."""
+    try:
+        url = userpage.normalize_url(body.url)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not url:
+        raise HTTPException(400, "адрес не задан")
+    try:
+        async with httpx.AsyncClient(timeout=8, follow_redirects=False) as c:
+            r = await c.get(f"{url}/u/ping")
+    except httpx.HTTPError as e:
+        return {"ok": False, "message": f"не открывается: {type(e).__name__}: {str(e)[:150]}"}
+    if r.status_code == 200 and r.text.strip() == PING:
+        return {"ok": True, "message": f"{url} ведёт на эту панель"}
+    return {"ok": False, "message": f"{url}/u/ping ответил {r.status_code} — запрос не доходит до панели "
+                                    "(проверьте обратный прокси и DNS)"}
 
 
 @router.post("/api/user-page/preview")

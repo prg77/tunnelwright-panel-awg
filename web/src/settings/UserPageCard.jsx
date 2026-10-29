@@ -19,10 +19,22 @@ export const UserPageCard = ({ push }) => {
   const [tpl, setTpl] = useState("");
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState("");
+  const [userUrl, setUserUrl] = useState("");
+  const [check, setCheck] = useState(null);         // {ok, message} последней проверки адреса
   const area = useRef(null);
 
-  useEffect(() => { api.userPage().then(r => { setS(r); setTpl(r.template); }).catch(() => {}); }, []);
+  useEffect(() => { api.userPage().then(r => { setS(r); setTpl(r.template); setUserUrl(r.user_url || ""); }).catch(() => {}); }, []);
   if (!s) return null;
+
+  // Панель на поддомене (panel.example.com) — предлагаем основной домен для ссылок клиентов
+  const host = window.location.hostname;
+  const labels = host.split(".");
+  const suggest = !/^[\d.]+$/.test(host) && labels.length > 2 ? `https://${labels.slice(1).join(".")}` : "";
+  const checkUrl = async () => {
+    setCheck({ok:null, message:"Проверяю…"});
+    try { setCheck(await api.checkUserUrl(userUrl)); }
+    catch (e) { setCheck({ok:false, message:e.message}); }
+  };
 
   const save = async (patch, okTitle) => {
     setBusy(true);
@@ -55,6 +67,31 @@ export const UserPageCard = ({ push }) => {
             Страница включена
           </Toggle>
           <Toggle on={s.show_qr} onClick={() => save({show_qr:!s.show_qr}, "Сохранено")}>Показывать QR-код</Toggle>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+            <span style={{fontSize:14,minWidth:120}}>Адрес ссылок</span>
+            <input value={userUrl} onChange={e => { setUserUrl(e.target.value); setCheck(null); }}
+              placeholder={`${window.location.origin} — адрес панели`}
+              style={{flex:1,minWidth:220,background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:"var(--radius)",
+                color:"var(--text)",padding:"6px 10px",fontSize:14,fontFamily:"var(--mono)"}}/>
+            <Btn v="ghost" onClick={checkUrl} disabled={!userUrl.trim()}>Проверить</Btn>
+            <Btn v="primary" onClick={() => save({user_url:userUrl}, userUrl.trim() ? "Адрес ссылок сохранён" : "Ссылки ведут на адрес панели")}
+              disabled={busy || userUrl.trim().replace(/\/+$/, "") === (s.user_url || "")}>Сохранить</Btn>
+          </div>
+          {suggest && !userUrl && <div style={{fontSize:12,color:"var(--muted)"}}>
+            Панель на поддомене — ссылки клиентов можно давать на основном домене:{" "}
+            <button onClick={() => { setUserUrl(suggest); setCheck(null); }} style={{background:"none",border:"none",padding:0,
+              color:"var(--cyan)",cursor:"pointer",fontFamily:"var(--mono)",fontSize:12}}>{suggest}</button>
+          </div>}
+          {check && <div style={{fontSize:12,color:check.ok === null ? "var(--muted)" : check.ok ? "var(--success)" : "var(--error)"}}>
+            {check.ok === true ? "✓ " : check.ok === false ? "✗ " : ""}{check.message}
+          </div>}
+          <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6}}>
+            Свой адрес для страниц пользователей, например основной домен при панели на поддомене. Он должен вести
+            на эту панель (обратный прокси с сертификатом); там открываются только страницы пользователей. Пусто — ссылки
+            ведут на адрес панели.
+          </div>
         </div>
         <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6}}>
           Ссылку клиента создаёт кнопка <b>QR</b> на странице «Клиенты» или команда бота <code>/link имя</code>.

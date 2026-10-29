@@ -132,9 +132,10 @@ async def handle(text: str, chat: str):
                     return
                 token = userpage.issue(c["panel_id"])
                 audit.log(None, "telegram", "user_link_sent", str(c["panel_id"]), name=c["name"])
-                own_cert = os.environ.get("PANEL_PUBLIC_URL")   # задан — панель за прокси со своим сертификатом
+                user_url = userpage.settings()["user_url"]   # отдельный адрес ссылок, если задан
+                own_cert = user_url or os.environ.get("PANEL_PUBLIC_URL")   # адрес задан — свой сертификат
                 await reply(f"🔗 <b>{telegram.escape(c['name'])}</b>\n"
-                            f"{telegram.escape(config.PUBLIC_URL)}/u/{token}"
+                            f"{telegram.escape(user_url or config.PUBLIC_URL)}/u/{token}"
                             + ("" if own_cert else
                                "\n\nСертификат панели самоподписанный — браузер попросит подтвердить переход."))
             else:
