@@ -142,3 +142,21 @@ def test_stats_traffic_and_settings(client, cluster):
     assert {"portal_name", "timezone", "version", "wg_host", "web_port", "wg_port"} <= set(st)
     for path in ("/api/wireguard/client", "/config.json", "/limits.json", "/meta.json", "/stats.json"):
         assert client.get(path).status_code == 404, path       # старый API убран
+
+
+def test_subnet_20_addresses(client, cluster):
+    from app import clients
+    login(client)
+    assert str(clients.SUBNET) == "10.8.0.0/20" and client.get("/api/settings").json()["subnet"] == "10.8.0.0/20"
+    for bad in ("10.8.0.1", "10.8.1.0", "10.8.0.255", "10.8.16.2", "10.9.0.2"):
+        assert client.post("/api/clients", json={"name": "x", "ip": bad}).status_code == 400, bad
+    c = client.post("/api/clients", json={"name": "за /24", "ip": "10.8.3.17"}).json()
+    assert c["ip"] == "10.8.3.17" and cluster[cluster.local].by_ip("10.8.3.17")
+    # Свободные адреса — по порядку: /24 заполняется первой, .0 и .255 пропускаются
+    db.execute("INSERT INTO users(id, uid, name) VALUES(900, 'u900', 'fill')")
+    for i in range(2, 255):
+        if i != 2:
+            db.execute("INSERT INTO clients(uid, user_id, ipv4, adopted) VALUES(?, 900, ?, 1)", (f"f{i}", f"10.8.0.{i}"))
+    assert clients.free_ip() == "10.8.0.2"
+    db.execute("INSERT INTO clients(uid, user_id, ipv4, adopted) VALUES('f2', 900, '10.8.0.2', 1)")
+    assert clients.free_ip() == "10.8.1.1"

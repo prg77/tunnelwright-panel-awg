@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from .. import audit, config, db, hostmetrics, nodes, telegram, traffic
+from .. import audit, clients, config, db, hostmetrics, nodes, telegram, traffic
 from ..security import Admin
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -23,7 +23,8 @@ def get_settings(_admin=Admin):
     return {"portal_name": db.get_setting("portal_name", "Private World"),
             "timezone": timezone(), "version": config.APP_VERSION,
             "wg_host": config.WG_HOST, "web_port": config.WEB_PORT,
-            "wg_port": config.WG_PORT if nodes.local_node_id() else None}   # VPN на сервере панели
+            "wg_port": config.WG_PORT if nodes.local_node_id() else None,   # VPN на сервере панели
+            "subnet": str(clients.SUBNET)}
 
 
 class SettingsBody(BaseModel):

@@ -18,6 +18,8 @@ WG_PORT = int(os.environ.get("WG_PORT", "51820"))
 WG_DNS = [d.strip() for d in os.environ.get("WG_DNS", "1.1.1.1").split(",") if d.strip()]
 WG_KEEPALIVE = int(os.environ.get("WG_KEEPALIVE", "25"))
 WG_MTU = int(os.environ.get("WG_MTU", "1420"))
+# Подсеть клиентов — та же, что у панели (panel/app/clients.py SUBNET). Только расширение: адреса сохраняются.
+WG_IPV4_CIDR = os.environ.get("WG_IPV4_CIDR", "10.8.0.0/20")
 
 APP_VERSION = os.environ.get("APP_VERSION", "dev")
 
@@ -26,6 +28,7 @@ WG_DB_FILE = WG_DATA_DIR / "wg-easy.db"
 CREDS_FILE = DATA_DIR / "wg-easy-admin.json"   # учётка администратора wg-easy (создаёт агент)
 LIMITS_FILE = DATA_DIR / "limits.json"          # лимиты скорости {ip: {down, up}} в Мбит/с
 IMPORT_FILE = DATA_DIR / "import" / "wg0.json"  # wg0.json старой установки для переноса
+CIDR_PLAN_FILE = DATA_DIR / "cidr-change.json"  # адреса клиентов на время смены подсети (продолжение после сбоя)
 
 # Удалённая нода: с каких адресов принимать запросы (IP панели). Пусто — без ограничения (локальная нода).
 ALLOWED_IPS = {ip.strip() for ip in os.environ.get("NODE_ALLOWED_IPS", "").split(",") if ip.strip()}

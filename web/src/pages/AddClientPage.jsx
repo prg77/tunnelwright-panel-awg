@@ -2,7 +2,8 @@ import React, { useState, useEffect } from "react";
 import { api } from "../api";
 import { Card, CardH, Btn } from "../components/ui";
 import { useGroups } from "../stores/groups";
-import { getLastOctet, getPrefix } from "../utils/ip";
+import { IpField, ipError } from "../components/IpField";
+import { DEFAULT_SUBNET } from "../utils/ip";
 
 export const DEFAULT_LIMIT = { down: 5, up: 5 };
 
@@ -10,7 +11,7 @@ export const DEFAULT_LIMIT = { down: 5, up: 5 };
 // Пользователь с первым устройством создаётся одним запросом: панель заводит профиль на всех нодах,
 // сохраняет группу, заметку и лимит и сама отправляет уведомление в Telegram (если включено).
 // Ещё устройства добавляются в списке пользователей (кнопка «+»).
-export const AddClientPage = ({ push, setQrClient, setPage, clients, onCreated }) => {
+export const AddClientPage = ({ push, setQrClient, setPage, clients, onCreated, subnet=DEFAULT_SUBNET }) => {
   const { names: GROUPS, colors: GC } = useGroups();
   const [addName,  setAddName]  = useState("");
   const [addDevice,setAddDevice]= useState("");
@@ -24,26 +25,21 @@ export const AddClientPage = ({ push, setQrClient, setPage, clients, onCreated }
   const [nodeList, setNodeList] = useState(null);
   useEffect(()=>{ api.nodes().then(setNodeList).catch(()=>setNodeList([])); },[]);
 
-  const usedLastOctets = new Set((clients||[]).map(c=>getLastOctet(c.ip)).filter(n=>n!==null));
-  const subnetPrefix = (()=>{
-    const c=(clients||[]).find(c=>getLastOctet(c.ip)!==null);
-    return c ? getPrefix(c.ip) : "10.8.0";
-  })();
-  // Свободные адреса: .2–.254 (.1 — сервер)
-  const freeOctets = Array.from({length:253},(_,i)=>i+2).filter(n=>!usedLastOctets.has(n));
-  // Выбор пользователя; пока его нет — первый свободный (список клиентов может догрузиться позже)
-  const [pickedOctet, setIpLastOctet] = useState(null);
-  const ipLastOctet = pickedOctet!=null && !usedLastOctets.has(pickedOctet) ? pickedOctet : (freeOctets[0]??2);
+  // IP — пусто: следующий свободный адрес подставит сервер
+  const [ip, setIp] = useState("");
+  const usedIps = (clients||[]).map(c=>c.ip);
 
   const doCreate = async () => {
     const n = addName.trim();
     if(!n){ push({type:"err", title:"Введите имя пользователя"}); return; }
+    const ipErr=ipError(ip, usedIps, subnet);
+    if(ipErr){ push({type:"err", title:"IP адрес", detail:ipErr}); return; }
     setAddBusy(true);
     try{
       const created = await api.createClient({
         name: n,
         ...(addDevice.trim() ? {device:addDevice.trim()} : {}),
-        ...(freeOctets.length>0 ? {ip:`${subnetPrefix}.${ipLastOctet}`} : {}),
+        ...(ip ? {ip} : {}),
         ...(addExp ? {expiresAt:new Date(addExp).toISOString()} : {}),
         ...(addGroup!=="Без группы" ? {group:addGroup} : {}),
         ...(addNote.trim() ? {note:addNote.trim()} : {}),
@@ -151,21 +147,12 @@ export const AddClientPage = ({ push, setQrClient, setPage, clients, onCreated }
                 boxSizing:"border-box",display:"block"}}/>
           </div>
 
-          {/* IP адрес — всегда показываем picker */}
+          {/* IP адрес — пусто: следующий свободный */}
           <div>
             <div style={{fontSize:12,color:"var(--muted)",fontWeight:700,marginBottom:8}}>
               IP адрес
             </div>
-            <div style={{display:"flex",alignItems:"center",background:"var(--bg)",border:"1px solid var(--border)",borderRadius:"var(--radius)",overflow:"hidden"}}>
-              <span style={{padding:"9px 12px",fontSize:14,fontFamily:"var(--mono)",color:"var(--muted)",borderRight:"1px solid var(--border)",flexShrink:0,whiteSpace:"nowrap"}}>{subnetPrefix}.</span>
-              <select value={ipLastOctet} onChange={e=>setIpLastOctet(Number(e.target.value))}
-                style={{flex:1,background:"var(--bg)",border:"none",color:"var(--text)",fontFamily:"var(--mono)",fontSize:14,padding:"9px 10px",cursor:"pointer",outline:"none"}}>
-                {freeOctets.map((n,i)=>(
-                  <option key={n} value={n}>{n}/32{i===0?" — следующий свободный":""}</option>
-                ))}
-              </select>
-            </div>
-            {freeOctets.length===0&&<div style={{fontSize:12,color:"var(--error)",marginTop:4}}>Все адреса заняты</div>}
+            <IpField value={ip} onChange={setIp} used={usedIps} subnet={subnet} onEnter={doCreate}/>
           </div>
 
           {/* Лимит скорости — необязательный */}

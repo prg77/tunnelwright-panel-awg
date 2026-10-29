@@ -26,11 +26,12 @@ jobs:
         run: |
           pip install -q -r requirements.txt pytest==9.2.0
           python -m pytest -q -p no:warnings
-      - name: node-agent syntax
+      - name: node-agent syntax and tests
         working-directory: node
         run: |
           pip install -q -r requirements.txt
           python -m compileall -q app && python -c "import app.main"
+          pip install -q pytest==9.2.0 && python -m pytest -q -p no:warnings tests
 
   web:
     runs-on: ubuntu-latest

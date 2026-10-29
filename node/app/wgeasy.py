@@ -3,6 +3,7 @@
 API wg-easy работает по Basic-auth логином его администратора. Эту учётку создаёт
 агент при первой настройке и хранит в CREDS_FILE (права 600) — больше её никто не знает.
 """
+import ipaddress
 import json
 import logging
 import os
@@ -84,9 +85,10 @@ class WgEasy:
             return False
 
     async def bootstrap(self):
-        """Идемпотентная настройка wg-easy: учётка, перенос или новая установка, userconfig."""
+        """Идемпотентная настройка wg-easy: учётка, перенос или новая установка, подсеть, userconfig."""
         if await self.ready():
             await self._apply_import_if_pending()
+            await self.ensure_cidr()
             return
         if self._creds:
             raise WgEasyError("учётка агента не подходит к wg-easy — нужен сброс wg-easy")
@@ -114,8 +116,52 @@ class WgEasy:
             await self._apply_interface({})
         await self.apply_userconfig()
         await self._reset_client_defaults()
+        await self.ensure_cidr(restart=False)
         await self._req("POST", "/admin/interface/restart")
         log.info("wg-easy настроен")
+
+    async def ensure_cidr(self, restart: bool = True):
+        """Подсеть интерфейса = WG_IPV4_CIDR, адреса клиентов — прежние.
+
+        wg-easy при смене подсети (admin/interface/cidr) перенумеровывает всех клиентов, а у клиента
+        в конфиге записан его адрес — конфиги перестали бы работать. Поэтому адреса запоминаются
+        в CIDR_PLAN_FILE и возвращаются в два шага (адреса в wg-easy уникальны): сначала свободные
+        временные из конца подсети, затем прежние. После сбоя агент продолжает по тому же файлу.
+        Только расширение: подсеть, в которую не входят нынешние адреса, не применяется."""
+        plan = None
+        if config.CIDR_PLAN_FILE.exists():
+            plan = json.loads(config.CIDR_PLAN_FILE.read_text())
+        else:
+            iface = await self._json("GET", "/admin/interface")
+            target = ipaddress.ip_network(config.WG_IPV4_CIDR)
+            current = ipaddress.ip_network(iface["ipv4Cidr"], strict=False)
+            if current == target:
+                return
+            if not current.subnet_of(target):
+                log.warning("подсеть %s не включает нынешнюю %s — не меняется", target, current)
+                return
+            addrs = {str(c["id"]): c["ipv4Address"] for c in await self.list_clients()}
+            plan = {"target": str(target), "addresses": addrs}
+            config.CIDR_PLAN_FILE.write_text(json.dumps(plan))
+            await self._req("POST", "/admin/interface/cidr",
+                            json={"ipv4Cidr": str(target), "ipv6Cidr": iface["ipv6Cidr"]})
+            log.info("подсеть %s → %s", current, target)
+
+        want = {int(k): v for k, v in plan["addresses"].items()}
+        now = {c["id"]: c["ipv4Address"] for c in await self.list_clients()}
+        moved = [cid for cid, ip in want.items() if cid in now and now[cid] != ip]
+        if moved:
+            taken = set(now.values()) | set(want.values())
+            spare = (str(h) for h in reversed(list(ipaddress.ip_network(plan["target"]).hosts()))
+                     if str(h) not in taken)
+            for cid in moved:
+                await self.update_client(cid, {"ipv4Address": next(spare)})
+            for cid in moved:
+                await self.update_client(cid, {"ipv4Address": want[cid]})
+            log.info("адреса клиентов восстановлены: %s", len(moved))
+        config.CIDR_PLAN_FILE.unlink()
+        if restart:      # адрес сервера и NAT (шаблон hooks берёт подсеть интерфейса) — с новой маской
+            await self._req("POST", "/admin/interface/restart")
 
     async def _reset_client_defaults(self):
         """Импорт копирует в клиентов тогдашние значения по умолчанию (IPv6, keepalive 0) —

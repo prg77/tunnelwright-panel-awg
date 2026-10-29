@@ -989,7 +989,7 @@ function App() {
           })()}
 
           {/* ──────────────────── ADD ──────────────────── */}
-          {page==="add"&&<div className="page-form" style={{display:"flex",justifyContent:"center",width:"100%"}}><AddClientPage push={push} setQrClient={setQrClient} setPage={setPage} clients={clients} onCreated={c=>{ setClients(cs=>[...cs.filter(x=>x.id!==c.id),c]); api.users().then(us=>setUsers(us||[])).catch(()=>{}); }}/></div>}
+          {page==="add"&&<div className="page-form" style={{display:"flex",justifyContent:"center",width:"100%"}}><AddClientPage push={push} setQrClient={setQrClient} setPage={setPage} clients={clients} subnet={config.subnet} onCreated={c=>{ setClients(cs=>[...cs.filter(x=>x.id!==c.id),c]); api.users().then(us=>setUsers(us||[])).catch(()=>{}); }}/></div>}
 
           {/* ──────────────────── LISTS ──────────────────── */}
           {page==="lists"&&<ListsPage push={push} setConfirmModal={setConfirmModal} onChanged={loadRouting}/>}
@@ -1165,7 +1165,7 @@ function App() {
       {qrClient&&<QRModal client={qrClient} onClose={()=>setQrClient(null)}/>}
       {editLimit&&<LimitModal data={editLimit} onSave={(_ip,d,u)=>updateLimit(editLimit.id,d,u)} onRemove={()=>removeLimit(editLimit.id)} onClose={()=>setEditLimit(null)}/>}
       {editUser&&<UserModal user={editUser} users={users} onSave={(p)=>saveUser(editUser.id,p)} onMerge={(other)=>mergeUser(editUser,other)} onClose={()=>setEditUser(null)}/>}
-      {editConfig&&<ConfigModal config={editConfig.config} user={editConfig.user} allClients={clients} onSave={(p)=>saveConfig(editConfig,p)} onClose={()=>setEditConfig(null)}/>}
+      {editConfig&&<ConfigModal config={editConfig.config} user={editConfig.user} allClients={clients} subnet={config.subnet} onSave={(p)=>saveConfig(editConfig,p)} onClose={()=>setEditConfig(null)}/>}
       {editRouting&&<RoutingModal client={editRouting} push={push} setPage={setPage} onSaved={loadRouting} onClose={()=>setEditRouting(null)}/>}
       {confirmModal&&<ConfirmModal title={confirmModal.title} detail={confirmModal.detail} confirmLabel={confirmModal.confirmLabel} onConfirm={confirmModal.onConfirm} onClose={()=>setConfirmModal(null)}/>}
       <Stack/>

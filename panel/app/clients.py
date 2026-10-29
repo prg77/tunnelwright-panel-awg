@@ -20,7 +20,17 @@ from . import db, limits, nodes, users
 
 log = logging.getLogger("panel.clients")
 
-SUBNET = ipaddress.ip_network("10.8.0.0/24")   # подсеть wg-easy по умолчанию — одинакова на всех нодах
+# Подсеть устройств — одна на всех нодах (агент ноды расширяет до неё подсеть wg-easy, сохраняя адреса).
+# Была 10.8.0.0/24: она входит в /20, поэтому прежние адреса и конфиги не меняются. Адреса выдаются
+# по порядку — за пределы /24 панель выходит, только когда та заполнена.
+SUBNET = ipaddress.ip_network("10.8.0.0/20")
+SERVER_IP = SUBNET.network_address + 1
+
+
+def _usable(addr: ipaddress.IPv4Address) -> bool:
+    """Адрес для устройства: в подсети, не сервер, не сеть и не широковещательный, без .0 и .255 в конце
+    (такие адреса внутри /20 допустимы, но некоторые устройства и роутеры с ними работают плохо)."""
+    return addr in SUBNET and addr != SERVER_IP and addr.packed[-1] not in (0, 255)
 
 _SELECT = ("SELECT c.*, u.name AS user_name, u.uid AS user_uid, u.enabled AS user_enabled, "
            "u.expires_at AS user_expires FROM clients c LEFT JOIN users u ON u.id = c.user_id")
@@ -85,8 +95,8 @@ def check_ip(ip: str, exclude_id: int | None = None) -> str:
         addr = ipaddress.IPv4Address(str(ip).split("/")[0].strip())
     except ValueError:
         raise ClientError("неверный адрес")
-    if addr not in SUBNET or addr in (SUBNET.network_address, SUBNET.broadcast_address, SUBNET.network_address + 1):
-        raise ClientError(f"адрес должен быть в {SUBNET} (кроме .0, .1 и .255)")
+    if not _usable(addr):
+        raise ClientError(f"адрес должен быть в {SUBNET} (кроме {SERVER_IP} и адресов на .0 и .255)")
     row = db.one("SELECT id FROM clients WHERE ipv4=?", (str(addr),))
     if row and row["id"] != exclude_id:
         raise ClientError(f"адрес {addr} уже занят")
@@ -95,8 +105,8 @@ def check_ip(ip: str, exclude_id: int | None = None) -> str:
 
 def free_ip() -> str:
     used = {r["ipv4"] for r in db.query("SELECT ipv4 FROM clients WHERE ipv4 IS NOT NULL")}
-    for addr in list(SUBNET.hosts())[1:]:          # .1 — сервер
-        if str(addr) not in used:
+    for addr in SUBNET.hosts():
+        if _usable(addr) and str(addr) not in used:
             return str(addr)
     raise ClientError("в подсети нет свободных адресов")
 
