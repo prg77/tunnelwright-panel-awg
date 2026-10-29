@@ -1,0 +1,62 @@
+name: dev-images
+
+# Каждый пуш в dev → образы ghcr.io/prg77/tunnelwright-{web,api,node}:dev для тестового стека
+# (deploy/portainer/docker-compose.dev.yml). latest и номера версий не трогаются.
+# Версия сборки — dev-<коммит>: у неё нет номера, поэтому агенты нод она не обновляет.
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: dev-images
+  cancel-in-progress: true
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        run: echo "VERSION=dev-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Web image → GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: web
+          platforms: linux/amd64,linux/arm64
+          build-args: APP_VERSION=${{ env.VERSION }}
+          push: true
+          tags: ghcr.io/prg77/tunnelwright-web:dev
+
+      - name: panel-api image → GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: panel
+          build-contexts: node=node
+          platforms: linux/amd64,linux/arm64
+          build-args: APP_VERSION=${{ env.VERSION }}
+          push: true
+          tags: ghcr.io/prg77/tunnelwright-api:dev
+
+      - name: node-agent image → GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: node
+          platforms: linux/amd64,linux/arm64
+          build-args: APP_VERSION=${{ env.VERSION }}
+          push: true
+          tags: ghcr.io/prg77/tunnelwright-node:dev

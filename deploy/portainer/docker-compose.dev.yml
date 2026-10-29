@@ -1,0 +1,50 @@
+# Tunnelwright Panel AWG — тестовый стек Portainer на ветке dev (рядом с основным, без общих данных).
+# Образы :dev собираются на каждый пуш в dev. Свои имена контейнеров и томов, порт 58831.
+# Обновление: Stacks → tunnelwright-dev → Update the stack с «Re-pull image».
+#
+# Переменные (необязательные): DEV_WEB_PORT (58831), PANEL_HOST, PANEL_TLS (on/off),
+# PANEL_PUBLIC_URL, PANEL_USER_URL — как в основном стеке (docker-compose.yml).
+# Реальные данные — восстановите в нём бэкап основной панели («Настройки → Резервные копии»), затем
+# удалите в нём ноды «только из панели»: иначе две панели синхронизируют одни и те же ноды.
+# Агенты нод тестовая сборка не обновляет: у версии dev-<коммит> нет номера.
+name: tunnelwright-dev
+
+volumes:
+  data: { name: tunnelwright_dev_data }
+  tls:  { name: tunnelwright_dev_tls }
+
+services:
+  panel-api:
+    image: ghcr.io/prg77/tunnelwright-api:dev
+    container_name: tunnelwright-dev-api
+    restart: unless-stopped
+    environment:
+      LOCAL_NODE_URL: ""
+      PANEL_WG_HOST: ${PANEL_HOST:-}
+      PANEL_WEB_PORT: ${DEV_WEB_PORT:-58831}
+      PANEL_PUBLIC_URL: ${PANEL_PUBLIC_URL:-}
+      PANEL_USER_URL: ${PANEL_USER_URL:-}
+      PANEL_NODE_IP_LOCK: "false"
+      PANEL_NODE_IMAGE: ghcr.io/prg77/tunnelwright-node:dev   # ноды, установленные из тестовой панели
+    volumes:
+      - data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8700/api/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+
+  web:
+    image: ghcr.io/prg77/tunnelwright-web:dev
+    container_name: tunnelwright-dev-web
+    restart: unless-stopped
+    environment:
+      PANEL_TLS: ${PANEL_TLS:-on}
+      PANEL_HOST: ${PANEL_HOST:-}
+    ports:
+      - "${DEV_WEB_PORT:-58831}:443"
+    volumes:
+      - tls:/etc/tunnelwright/tls
+    depends_on: [panel-api]
+    logging: { driver: json-file, options: { max-size: "5m", max-file: "3" } }
