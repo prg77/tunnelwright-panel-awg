@@ -139,6 +139,9 @@ rm -rf "${DEST}.new"
 mkdir -p "${DEST}.new"
 tar -xzf "$TMP/src.tar.gz" -C "${DEST}.new" --strip-components=1
 [[ -f "${DEST}.new/installer/setup.sh" ]] || die "Архив повреждён: нет installer/setup.sh"
+# Ветка без релиза — своя версия (dev-<коммит>): образы с ней собираются на сервере, не перекрывая
+# образы релиза из VERSION, и панель не обновляет агентов нод (у версии нет номера)
+[[ -n "$CHANNEL" ]] && echo "$LABEL" > "${DEST}.new/VERSION"
 rm -rf "$DEST"
 mv "${DEST}.new" "$DEST"
 
