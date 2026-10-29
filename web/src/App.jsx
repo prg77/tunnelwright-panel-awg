@@ -989,7 +989,7 @@ function App() {
           })()}
 
           {/* ──────────────────── ADD ──────────────────── */}
-          {page==="add"&&<div className="page-form" style={{display:"flex",justifyContent:"center",width:"100%"}}><AddClientPage push={push} setQrClient={setQrClient} setPage={setPage} clients={clients} subnet={config.subnet} onCreated={c=>{ setClients(cs=>[...cs.filter(x=>x.id!==c.id),c]); api.users().then(us=>setUsers(us||[])).catch(()=>{}); }}/></div>}
+          {page==="add"&&<div className="page-form" style={{display:"flex",justifyContent:"center",width:"100%"}}><AddClientPage push={push} setQrClient={setQrClient} setPage={setPage} onCreated={c=>{ setClients(cs=>[...cs.filter(x=>x.id!==c.id),c]); api.users().then(us=>setUsers(us||[])).catch(()=>{}); }}/></div>}
 
           {/* ──────────────────── LISTS ──────────────────── */}
           {page==="lists"&&<ListsPage push={push} setConfirmModal={setConfirmModal} onChanged={loadRouting}/>}

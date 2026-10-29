@@ -2,22 +2,20 @@ import React, { useState, useEffect } from "react";
 import { api } from "../api";
 import { Card, CardH, Btn } from "../components/ui";
 import { useGroups } from "../stores/groups";
-import { IpField, ipError } from "../components/IpField";
-import { DEFAULT_SUBNET } from "../utils/ip";
 
 export const DEFAULT_LIMIT = { down: 5, up: 5 };
 
 
 // Пользователь с первым устройством создаётся одним запросом: панель заводит профиль на всех нодах,
-// сохраняет группу, заметку и лимит и сама отправляет уведомление в Telegram (если включено).
+// сохраняет группу и лимит и сама отправляет уведомление в Telegram (если включено). IP — следующий
+// свободный; адрес устройства и заметка меняются потом в списке пользователей.
 // Ещё устройства добавляются в списке пользователей (кнопка «+»).
-export const AddClientPage = ({ push, setQrClient, setPage, clients, onCreated, subnet=DEFAULT_SUBNET }) => {
+export const AddClientPage = ({ push, setQrClient, setPage, onCreated }) => {
   const { names: GROUPS, colors: GC } = useGroups();
   const [addName,  setAddName]  = useState("");
   const [addDevice,setAddDevice]= useState("");
   const [addGroup, setAddGroup] = useState("Без группы");
   const [addExp,   setAddExp]   = useState("");
-  const [addNote,  setAddNote]  = useState("");
   const [limitOn,  setLimitOn]  = useState(false);
   const [limit,    setLimit]    = useState(DEFAULT_LIMIT);
   const [addBusy,  setAddBusy]  = useState(false);
@@ -25,24 +23,16 @@ export const AddClientPage = ({ push, setQrClient, setPage, clients, onCreated, 
   const [nodeList, setNodeList] = useState(null);
   useEffect(()=>{ api.nodes().then(setNodeList).catch(()=>setNodeList([])); },[]);
 
-  // IP — пусто: следующий свободный адрес подставит сервер
-  const [ip, setIp] = useState("");
-  const usedIps = (clients||[]).map(c=>c.ip);
-
   const doCreate = async () => {
     const n = addName.trim();
     if(!n){ push({type:"err", title:"Введите имя пользователя"}); return; }
-    const ipErr=ipError(ip, usedIps, subnet);
-    if(ipErr){ push({type:"err", title:"IP адрес", detail:ipErr}); return; }
     setAddBusy(true);
     try{
       const created = await api.createClient({
         name: n,
         ...(addDevice.trim() ? {device:addDevice.trim()} : {}),
-        ...(ip ? {ip} : {}),
         ...(addExp ? {expiresAt:new Date(addExp).toISOString()} : {}),
         ...(addGroup!=="Без группы" ? {group:addGroup} : {}),
-        ...(addNote.trim() ? {note:addNote.trim()} : {}),
         ...(limitOn ? {limit:{down:+limit.down, up:+limit.up}} : {}),
       });
       push({type:"ok", title:`${created.label} создан`, detail:`IP ${created.ip}`
@@ -133,26 +123,6 @@ export const AddClientPage = ({ push, setQrClient, setPage, clients, onCreated, 
               style={{marginTop:5,fontSize:12,color:"var(--muted)",background:"none",border:"none",cursor:"pointer",padding:0}}>
               Убрать срок
             </button>}
-          </div>
-
-          {/* Заметка */}
-          <div>
-            <label style={{display:"block",fontSize:12,color:"var(--muted)",fontWeight:700,
-              marginBottom:8}}>Заметка</label>
-            <textarea value={addNote} onChange={e=>setAddNote(e.target.value)}
-              placeholder="iPhone Мамы, гость до мая…"
-              rows={2} style={{width:"100%",background:"var(--bg)",border:"1px solid var(--border)",
-                borderRadius:"var(--radius)",color:"var(--text)",fontFamily:"var(--sans)",fontSize:14,
-                padding:"9px 12px",outline:"none",resize:"vertical",
-                boxSizing:"border-box",display:"block"}}/>
-          </div>
-
-          {/* IP адрес — пусто: следующий свободный */}
-          <div>
-            <div style={{fontSize:12,color:"var(--muted)",fontWeight:700,marginBottom:8}}>
-              IP адрес
-            </div>
-            <IpField value={ip} onChange={setIp} used={usedIps} subnet={subnet} onEnter={doCreate}/>
           </div>
 
           {/* Лимит скорости — необязательный */}
