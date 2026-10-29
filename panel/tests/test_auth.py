@@ -67,7 +67,7 @@ def test_settings_timezone_and_audit(client):
     assert client.put("/api/settings", json={"timezone": "Mars/Base"}).status_code == 400
     r = client.put("/api/settings", json={"timezone": "Asia/Yekaterinburg", "portal_name": "Хельсинки"})
     assert r.json()["timezone"] == "Asia/Yekaterinburg"
-    assert client.get("/api/portal-name").json()["portal_name"] == "Хельсинки"
+    assert client.get("/api/settings").json()["portal_name"] == "Хельсинки"
     assert "Europe/Moscow" in client.get("/api/timezones").json()
     actions = [e["action"] for e in client.get("/api/audit").json()]
     assert "settings_changed" in actions and "login" in actions

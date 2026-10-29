@@ -212,7 +212,8 @@ const PAGE_IDS = ["dashboard","clients","add","lists","nodes","logs","settings"]
 function App() {
   const [authed,setAuthed]=useState(false);
   const [authBusy,setAuthBusy]=useState(true);
-  const [lUser,setLUser]=useState(()=>{ try{return localStorage.getItem("awg-login")||"admin";}catch{return "admin";} });
+  // Логин не подставляется: поле пустое при каждом открытии страницы входа
+  const [lUser,setLUser]=useState("");
   const [lPass,setLPass]=useState("");
   const [lTotp,setLTotp]=useState("");
   const [needTotp,setNeedTotp]=useState(false);
@@ -279,12 +280,6 @@ function App() {
     document.documentElement.dataset.theme = theme;
   },[theme]);
 
-  // До входа доступно только имя панели (/api/portal-name), остальные настройки — после входа
-  useEffect(()=>{
-    let c=false;
-    api.portalName().then(r=>{ if(!c&&r?.portal_name) setConfig(cfg=>({...cfg,portal_name:r.portal_name})); }).catch(()=>{});
-    return()=>{c=true;};
-  },[]);
 
   useEffect(()=>{
     let c=false;
@@ -308,7 +303,7 @@ function App() {
     setLBusy(true);setLErr("");
     try{
       await api.login(lUser.trim(), lPass, needTotp ? lTotp : undefined);
-      try{localStorage.setItem("awg-login",lUser.trim());}catch{}
+      try{localStorage.removeItem("awg-login");}catch{}   // логин, сохранённый прежними версиями
       setNeedTotp(false);setLTotp("");setAuthed(true);
     }catch(e){
       if(e.needTotp){ setNeedTotp(true); setLErr(needTotp ? e.message : ""); }
@@ -442,15 +437,13 @@ function App() {
     <div style={{minHeight:"100vh",background:"var(--bg)",color:"var(--text)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"var(--sans)",padding:16}}>
       <style>{GLOBAL_CSS}</style>
       <div style={{width:"100%",maxWidth:400}}>
-        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,marginBottom:24}}>
-          <Logo size={72}/>
-          <div style={{fontSize:24,fontWeight:400,textAlign:"center"}}>{portalName}</div>
-        </div>
-        <form onSubmit={e=>{e.preventDefault();doLogin();}} autoComplete="on" className="panel"
+        {/* До входа — только форма: без названия панели, версии и подставленного логина */}
+        <form onSubmit={e=>{e.preventDefault();doLogin();}} autoComplete="off" className="panel"
           style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",padding:"24px 24px 28px",display:"flex",flexDirection:"column",gap:16}}>
           <label className="field">
             <span>Логин</span>
-            <input type="text" value={lUser} onChange={e=>setLUser(e.target.value)} autoComplete="username"/>
+            <input type="text" value={lUser} onChange={e=>setLUser(e.target.value)} autoComplete="off" autoFocus
+              autoCapitalize="none" spellCheck={false}/>
           </label>
           <label className="field">
             <span>Пароль</span>
@@ -466,7 +459,6 @@ function App() {
           {lErr&&<div className="alert alert-error">{lErr}</div>}
           <Btn v="primary" type="submit" disabled={lBusy} style={{width:"100%"}}>{lBusy?"Проверка…":"Войти"}</Btn>
         </form>
-        <div style={{textAlign:"center",fontSize:12,color:"var(--muted)",marginTop:16}}>Tunnelwright Panel AWG {APP_VERSION}</div>
       </div>
     </div>
   );

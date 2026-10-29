@@ -18,12 +18,6 @@ def timezone() -> str:
     return db.get_setting("timezone", DEFAULT_TZ)
 
 
-@router.get("/portal-name")
-def portal_name():
-    """Публично: имя панели нужно на странице входа."""
-    return {"portal_name": db.get_setting("portal_name", "Private World")}
-
-
 @router.get("/settings")
 def get_settings(_admin=Admin):
     return {"portal_name": db.get_setting("portal_name", "Private World"),

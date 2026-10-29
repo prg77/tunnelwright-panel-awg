@@ -104,7 +104,6 @@ export const api = {
   trafficHistory: ()     => api.req("GET",    "/traffic/history"),
   trafficUsage:   ()     => api.req("GET",    "/traffic/usage"),
   resetTraffic:   ()     => api.req("DELETE", "/traffic"),
-  portalName:     ()     => api.req("GET",    "/portal-name"),
   // Telegram: уведомления отправляет сервер; токен бота в браузер не отдаётся
   telegram:     ()       => api.req("GET",  "/telegram"),
   saveTelegram: (s)      => api.req("PUT",  "/telegram", s),           // {enabled?, token?, chat_id?, events?}

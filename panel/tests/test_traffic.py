@@ -67,4 +67,4 @@ def test_api_requires_login(client):
     assert client.post("/api/clients", json={"name": "x"}).status_code == 401
     assert client.patch("/api/clients/1", json={}).status_code == 401
     assert client.delete("/api/traffic").status_code == 401
-    assert client.get("/api/portal-name").status_code == 200
+    assert client.get("/api/portal-name").status_code == 404     # имя панели до входа не раскрывается
