@@ -78,4 +78,4 @@ def test_nodes_list_and_delete(client, cluster):
     assert client.post(f"/api/nodes/{cluster.local}/update", json={"password": "x"}).status_code == 400
     assert client.delete(f"/api/nodes/{remote}").json()["ok"]
     assert db.one("SELECT COUNT(*) n FROM profiles WHERE node_id=?", (remote,))["n"] == 0
-    assert [c["name"] for c in client.get("/api/clients").json()] == ["Маша"]
+    assert [c["label"] for c in client.get("/api/clients").json()] == ["Маша"]

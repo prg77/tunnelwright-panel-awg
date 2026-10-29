@@ -194,6 +194,49 @@ MIGRATIONS = [
     UPDATE clients SET uid = lower(hex(randomblob(4))) WHERE uid IS NULL;
     CREATE UNIQUE INDEX clients_uid ON clients(uid);
     """,
+    # 10 — пользователи: человек отдельно от конфигов. Конфиг (строка clients) — устройство со своим
+    # IP и профилями на нодах; имя, срок, группа, заметка, включён ли, квота и личная ссылка —
+    # у пользователя. Каждый клиент становится пользователем с одним конфигом без названия
+    # (id и скрытый ID пользователя — те же, что были у клиента).
+    """
+    CREATE TABLE users (
+        id         INTEGER PRIMARY KEY,
+        uid        TEXT NOT NULL UNIQUE,
+        name       TEXT NOT NULL DEFAULT '',
+        enabled    INTEGER NOT NULL DEFAULT 1,
+        expires_at TEXT,
+        meta       TEXT NOT NULL DEFAULT '{}',
+        group_id   INTEGER REFERENCES groups(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    INSERT INTO users(id, uid, name, enabled, expires_at, meta, group_id, created_at)
+        SELECT id, COALESCE(uid, lower(hex(randomblob(4)))), COALESCE(name, ''), enabled, expires_at,
+               meta, group_id, created_at FROM clients WHERE deleted = 0;
+    ALTER TABLE clients ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+    UPDATE clients SET user_id = id, name = NULL, enabled = 1, expires_at = NULL, meta = '{}', group_id = NULL
+        WHERE deleted = 0;
+    CREATE INDEX clients_user ON clients(user_id);
+    CREATE TABLE quotas_new (
+        user_id     INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        limit_bytes INTEGER NOT NULL,
+        warned      TEXT,
+        blocked     TEXT
+    );
+    INSERT INTO quotas_new SELECT client_id, limit_bytes, warned, blocked FROM quotas
+        WHERE client_id IN (SELECT id FROM users);
+    DROP TABLE quotas;
+    ALTER TABLE quotas_new RENAME TO quotas;
+    CREATE TABLE user_links_new (
+        user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        token      TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL,
+        last_seen  INTEGER
+    );
+    INSERT INTO user_links_new SELECT client_id, token, created_at, last_seen FROM user_links
+        WHERE client_id IN (SELECT id FROM users);
+    DROP TABLE user_links;
+    ALTER TABLE user_links_new RENAME TO user_links;
+    """,
 ]
 
 _conn: sqlite3.Connection | None = None

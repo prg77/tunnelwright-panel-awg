@@ -7,8 +7,11 @@ import { fmtDateTime } from "../utils/time";
 const ACTIONS = {
   login:"Вход", login_failed:"Неудачный вход", password_changed:"Смена пароля",
   totp_enabled:"2FA включена", totp_disabled:"2FA отключена", settings_changed:"Настройки",
-  client_created:"Клиент создан", client_deleted:"Клиент удалён", client_enabled:"Клиент включён",
-  client_disabled:"Клиент отключён", client_address:"Смена IP", client_expiry:"Срок доступа",
+  client_created:"Устройство добавлено", client_deleted:"Устройство удалено", client_enabled:"Устройство включено",
+  client_disabled:"Устройство отключено", client_address:"Смена IP", client_renamed:"Устройство переименовано", client_expiry:"Срок доступа",
+  user_created:"Пользователь создан", user_deleted:"Пользователь удалён", user_enabled:"Пользователь включён",
+  user_disabled:"Пользователь отключён", user_renamed:"Пользователь переименован", user_expiry:"Срок доступа",
+  user_expired:"Срок истёк", users_merged:"Пользователи объединены", user_link_created:"Ссылка создана",
   client_expired:"Срок истёк", limits_changed:"Лимиты", traffic_reset:"Сброс статистики",
   telegram_settings:"Telegram", portal_name:"Имя панели", node_down:"Нода недоступна", node_up:"Нода восстановлена",
   node_install_started:"Установка ноды", node_installed:"Нода установлена", node_update_started:"Обновление ноды",
@@ -23,7 +26,7 @@ const ACTIONS = {
   user_config_download:"Конфиг по ссылке", user_page_settings:"Страница пользователя", telegram_bot:"Telegram-бот",
   admin_reset:"Сброс администратора",
 };
-const WARN = new Set(["login_failed","client_deleted","traffic_reset","node_down","totp_disabled","client_expired",
+const WARN = new Set(["login_failed","client_deleted","user_deleted","traffic_reset","node_down","totp_disabled","client_expired","user_expired",
   "node_removed","node_update_failed","quota_exceeded","nodes_pending","user_link_revoked","admin_reset"]);
 
 export const AuditLog = () => {

@@ -220,11 +220,11 @@ async def render(text: str, r: dict) -> tuple[str, dict]:
 
 
 async def client_config(panel_id: int, node_id: int | None = None) -> tuple[str, str, dict]:
-    """Итоговый конфиг профиля клиента на ноде (без node_id — первая нода): (текст, имя файла, сводка)."""
-    node, wg_id, _ = clients.lookup(panel_id, node_id)
+    """Итоговый конфиг профиля на ноде (без node_id — первая нода): (текст, имя файла, сводка)."""
+    node, wg_id = clients.lookup(panel_id, node_id)
     raw = (await node.req("GET", f"/clients/{wg_id}/config")).text
     text, info = await render(raw, get(panel_id))
-    name = (clients.get(panel_id) or {}).get("name") or f"client-{panel_id}"
+    name = clients.label(clients.get(panel_id) or {"id": panel_id})
     if len(nodes.all_nodes()) > 1:
         name = f"{name}-{node.name}"
     info["node_id"], info["node_name"] = node.id, node.name

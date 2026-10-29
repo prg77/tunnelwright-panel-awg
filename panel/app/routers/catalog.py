@@ -21,8 +21,8 @@ class GroupBody(BaseModel):
 
 
 def _groups():
-    return db.query("SELECT g.id, g.name, g.color, g.sort, COUNT(c.id) AS clients FROM groups g "
-                    "LEFT JOIN clients c ON c.group_id = g.id GROUP BY g.id ORDER BY g.sort, g.name")
+    return db.query("SELECT g.id, g.name, g.color, g.sort, COUNT(u.id) AS clients FROM groups g "
+                    "LEFT JOIN users u ON u.group_id = g.id GROUP BY g.id ORDER BY g.sort, g.name")
 
 
 def _group_fields(body: GroupBody) -> dict:

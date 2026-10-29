@@ -78,7 +78,7 @@ export const RoutingModal = ({ client, push, setPage, onSaved, onClose }) => {
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <div style={{flex:1}}>
             <div style={{fontWeight:700,fontSize:15}}>⇄ Маршрутизация</div>
-            <div style={{fontSize:12,color:"var(--muted)"}}>{client.name} · <span style={{fontFamily:"var(--mono)"}}>{(client.ip||"").replace("/32","")}{client.uid?` · #${client.uid}`:""}</span></div>
+            <div style={{fontSize:12,color:"var(--muted)"}}>{client.label} · <span style={{fontFamily:"var(--mono)"}}>{(client.ip||"").replace("/32","")}{client.uid?` · #${client.uid}`:""}</span></div>
           </div>
           <button onClick={onClose} style={{background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:19}}>✕</button>
         </div>

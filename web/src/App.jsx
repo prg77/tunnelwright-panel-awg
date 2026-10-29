@@ -7,10 +7,11 @@ import { SideNav } from "./components/SideNav";
 import { TrafficChart } from "./components/TrafficChart";
 import { Card, CardH, Btn } from "./components/ui";
 import { ConfirmModal } from "./modals/ConfirmModal";
+import { ConfigModal } from "./modals/ConfigModal";
 import { LimitModal } from "./modals/LimitModal";
-import { MetaModal } from "./modals/MetaModal";
 import { QRModal } from "./modals/QRModal";
 import { RoutingModal } from "./modals/RoutingModal";
+import { UserModal } from "./modals/UserModal";
 import { AddClientPage } from "./pages/AddClientPage";
 import { ListsPage } from "./pages/ListsPage";
 import { NodesPage } from "./pages/NodesPage";
@@ -28,7 +29,6 @@ import { groupsStore, useGroups } from "./stores/groups";
 import { TH_KEY, thStore } from "./stores/trafficHistory";
 import { ONLINE_MS, APP_VERSION, THEMES } from "./theme/constants";
 import { fmtBytes, fmtGB, aColor } from "./utils/format";
-import { getLastOctet, getPrefix } from "./utils/ip";
 
 
 // ═══════════════════════════════════════════════════════════════════
@@ -202,7 +202,12 @@ const IC = {
   play:  svg16(<polygon points="6 4 20 12 6 20 6 4"/>),
   trash: svg16(<><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></>),
   gauge: svg16(<><path d="M12 14l4-4"/><path d="M3.3 19a10 10 0 1 1 17.4 0"/></>),
+  plus:  svg16(<><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>),
+  device:svg16(<><rect x="6" y="2" width="12" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></>),
+  chevR: svg16(<polyline points="9 6 15 12 9 18"/>),
+  chevD: svg16(<polyline points="6 9 12 15 18 9"/>),
 };
+const isOnline = (c) => c.active && c.handshakeAt && (Date.now()-new Date(c.handshakeAt)) < ONLINE_MS;
 // Бейдж-метка: полупрозрачный фон цвета метки, как Tag в Grafana
 const tag = (c) => ({fontSize:12,lineHeight:"18px",padding:"0 6px",borderRadius:"var(--radius)",flexShrink:0,whiteSpace:"nowrap",fontWeight:500,
   color:c,background:`color-mix(in srgb,${c} 14%,transparent)`,border:`1px solid color-mix(in srgb,${c} 35%,transparent)`});
@@ -230,7 +235,9 @@ function App() {
     return ()=>window.removeEventListener("hashchange",onHash);
   },[]);
   const [theme,setTheme]=useState(()=>{ try{const t=localStorage.getItem("awg-theme")||"dark";return t==="light"?"light":"dark";}catch{return"dark";} });
-  const [clients,setClients]=useState([]);
+  const [clients,setClients]=useState([]);   // конфиги (устройства) с трафиком по нодам
+  const [users,setUsers]=useState([]);       // пользователи: имя, срок, группа, заметка, включение
+  const [expanded,setExpanded]=useState(()=>new Set());   // пользователи с раскрытым списком устройств
   const [cBusy,setCBusy]=useState(false);
   const [cErr,setCErr]=useState("");
   const [stats,setStats]=useState(null);
@@ -238,12 +245,19 @@ function App() {
   const [config,setConfig]=useState({wg_host:"",web_port:0,wg_port:null});
   const [tg,setTg]=useState(null);   // состояние уведомлений Telegram (без токена)
   const [qrClient,setQrClient]=useState(null);
-  // Лимиты и метаданные приходят в самих клиентах — здесь только удобные срезы для страниц
+  // Лимиты приходят в самих конфигах; пользователь — со своими конфигами и суммой трафика
   const limits = Object.fromEntries(clients.filter(c=>c.limit).map(c=>[c.ip, c.limit]));
-  const clientMeta = Object.fromEntries(clients.map(c=>[c.id, {group:c.group||undefined, note:c.note,
-    expiresAt:c.expiresAt||undefined, createdAt:c.createdAt&&c.createdAt.replace(" ","T")+"Z"}]));   // created_at — UTC из SQLite
+  const usersById = Object.fromEntries(users.map(u=>[u.id, u]));
+  const userRows = users.map(u=>{
+    const cfgs = clients.filter(c=>c.userId===u.id);
+    const hs = cfgs.filter(c=>c.active&&c.handshakeAt).map(c=>c.handshakeAt).sort((a,b)=>new Date(b)-new Date(a))[0]||null;
+    return {...u, cfgs, handshakeAt:hs, online:cfgs.some(isOnline),
+      tx:cfgs.reduce((s,c)=>s+(c.tx||0),0), rx:cfgs.reduce((s,c)=>s+(c.rx||0),0),
+      created:u.createdAt&&u.createdAt.replace(" ","T")+"Z"};   // created_at — UTC из SQLite
+  });
   const [editLimit,setEditLimit]=useState(null);
-  const [editMeta,setEditMeta]=useState(null);
+  const [editUser,setEditUser]=useState(null);
+  const [editConfig,setEditConfig]=useState(null);   // {config} — изменить, {user} — новое устройство
   const [editRouting,setEditRouting]=useState(null);
   const [routingAll,setRoutingAll]=useState({}); // {id: {net_mode, app_mode, custom}}
   const { names: GROUPS, colors: GC } = useGroups();
@@ -323,7 +337,7 @@ function App() {
 
   const loadClients=useCallback(async()=>{
     setCBusy(true); setCErr("");
-    try { setClients(await api.clients()||[]); }
+    try { const [cls,us]=await Promise.all([api.clients(),api.users()]); setClients(cls||[]); setUsers(us||[]); }
     catch(e) { setCErr(e.message); }
     finally { setCBusy(false); }
   },[]);
@@ -333,7 +347,7 @@ function App() {
     const poll=async()=>{ if(cancel)return;
       if(errSkip>0){errSkip--;return;}
       try{
-      const cls=await api.clients(); if(cancel)return; setClients(cls||[]);
+      const [cls,us]=await Promise.all([api.clients(),api.users()]); if(cancel)return; setClients(cls||[]); setUsers(us||[]);
       errSkip=0;
       const now=Date.now(); let tx=0,rx=0;
       (cls||[]).forEach(c=>{tx+=c.tx||0;rx+=c.rx||0;});
@@ -367,29 +381,92 @@ function App() {
     return()=>{c=true;clearInterval(t);};
   },[authed]);
 
-  const online =clients.filter(c=>c.enabled&&c.handshakeAt&&(Date.now()-new Date(c.handshakeAt))<ONLINE_MS).length;
-  const active =clients.filter(c=>c.enabled).length;
+  // Онлайн — пользователи, у которых хотя бы одно устройство на связи
+  const online =userRows.filter(u=>u.online).length;
+  const active =users.filter(u=>u.enabled).length;
   const totalTx=clients.reduce((s,c)=>s+(c.tx||0),0);
   const totalRx=clients.reduce((s,c)=>s+(c.rx||0),0);
 
-  // Изменения клиентов: сервер применяет их на всех нодах и сам шлёт уведомления в Telegram
+  // Изменения: сервер применяет их на всех нодах и сам шлёт уведомления в Telegram
   const putClient = (c) => setClients(cs => cs.map(x => x.id===c.id ? c : x));
+  const putUser = (u) => setUsers(us => us.map(x => x.id===u.id ? u : x));
+  const toggleExpand = (id) => setExpanded(s => { const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
+  // Пользователь: включение и срок действуют на все устройства — состояние конфигов берём заново
+  const toggleUser=async(u)=>{ try{
+    putUser(await api.patchUser(u.id, {enabled:!u.enabled}));
+    setClients(await api.clients()||[]);
+    push({type:u.enabled?"warn":"ok",title:`${u.name} ${u.enabled?"отключён":"включён"}`,
+      detail:u.enabled?"Все устройства пользователя потеряли доступ к VPN":"Устройства пользователя подключены к VPN"});
+  }catch(e){push({type:"err",title:"Не изменено",detail:e.message});} };
+  const saveUser=async(id,patch)=>{
+    try{
+      putUser(await api.patchUser(id, patch));
+      setClients(await api.clients()||[]);
+      push({type:"ok",title:"Сохранено",detail:patch.name});
+    }catch(e){ push({type:"err",title:"Не сохранено",detail:e.message}); }
+  };
+  const delUser = (u) => setConfirmModal({
+    title: `Удалить «${u.name}»?`,
+    detail: `Пользователь и все его устройства (${u.configs.length}) будут удалены: профили на всех нодах, IP освобождены, лимиты сняты, личная ссылка перестанет работать.`,
+    onConfirm: async () => {
+      try {
+        await api.delUser(u.id);
+        setUsers(us => us.filter(x => x.id !== u.id));
+        setClients(cs => cs.filter(x => x.userId !== u.id));
+        push({type:"warn",title:`${u.name} удалён`,detail:`Устройств удалено: ${u.configs.length}`});
+      } catch(e) { push({type:"err",title:"Не удалено",detail:e.message}); }
+    }
+  });
+  const mergeUser = (into, other) => setConfirmModal({
+    title: `Объединить «${other.name}» с «${into.name}»?`,
+    detail: `Устройства «${other.name}» (${other.configs.length}) перейдут к «${into.name}». Пользователь «${other.name}» будет удалён вместе со своей личной ссылкой и квотой; ключи и конфиги устройств не меняются.`,
+    confirmLabel: "Объединить",
+    onConfirm: async () => {
+      try {
+        await api.mergeUsers(into.id, [other.id]);
+        await loadClients();
+        setExpanded(s => new Set(s).add(into.id));
+        push({type:"ok",title:"Пользователи объединены",detail:`${into.name}: устройств ${into.configs.length+other.configs.length}`});
+      } catch(e) { push({type:"err",title:"Не объединено",detail:e.message}); }
+    }
+  });
+  // Устройство (конфиг)
   const toggleClient=async(c)=>{ try{
     putClient(await api.patchClient(c.id, {enabled:!c.enabled}));
-    push({type:c.enabled?"warn":"ok",title:`${c.name} ${c.enabled?"отключён":"включён"}`,
-      detail:c.enabled?"Клиент потерял доступ к VPN":"Клиент подключён к VPN"});
+    push({type:c.enabled?"warn":"ok",title:`${c.label} ${c.enabled?"отключено":"включено"}`,
+      detail:c.enabled?"Устройство потеряло доступ к VPN":"Устройство подключено к VPN"});
   }catch(e){push({type:"err",title:"Не изменено",detail:e.message});} };
   const delClient = (c) => setConfirmModal({
-    title: `Удалить «${c.name}»?`,
-    detail: `Профили на всех нодах будут удалены, IP ${c.ip} освобождён, лимит снят.`,
+    title: `Удалить устройство «${c.label}»?`,
+    detail: `Профили на всех нодах будут удалены, IP ${c.ip} освобождён, лимит снят. Пользователь и другие его устройства остаются.`,
     onConfirm: async () => {
       try {
         await api.delClient(c.id);
         setClients(cs => cs.filter(x => x.id !== c.id));
-        push({type:"warn",title:`${c.name} удалён`,detail:`IP ${c.ip} освобождён`});
+        setUsers(us => us.map(u => u.id===c.userId ? {...u, configs:u.configs.filter(id=>id!==c.id)} : u));
+        push({type:"warn",title:`${c.label} удалено`,detail:`IP ${c.ip} освобождён`});
       } catch(e) { push({type:"err",title:"Не удалено",detail:e.message}); }
     }
   });
+  const saveConfig=async(target,patch)=>{
+    if(target.config){
+      const c=target.config;
+      try{
+        putClient(await api.patchClient(c.id, patch));
+        push(patch.ip ? {type:"ok",title:"IP изменён",detail:`${c.label}: ${c.ip} → ${patch.ip}`} : {type:"ok",title:"Сохранено",detail:c.label});
+      }catch(e){ push({type:"err",title:"Не сохранено",detail:e.message}); throw e; }
+      return;
+    }
+    const u=target.user;
+    try{
+      const c=await api.addConfig(u.id, patch);
+      setClients(cs=>[...cs.filter(x=>x.id!==c.id),c]);
+      setUsers(us=>us.map(x=>x.id===u.id?{...x,configs:[...x.configs,c.id]}:x));
+      setExpanded(s=>new Set(s).add(u.id));
+      push({type:"ok",title:`${c.label} создано`,detail:`IP ${c.ip}`+(c.nodes.length?` · ноды: ${c.nodes.map(x=>x.name).join(", ")}`:"")});
+      setTimeout(()=>setQrClient(c),300);
+    }catch(e){ push({type:"err",title:"Устройство не создано",detail:e.message}); throw e; }
+  };
   const updateLimit = async (id, down, up) => {
     const c = clients.find(x => x.id===id);
     try {
@@ -397,7 +474,7 @@ function App() {
       setClients(cs => cs.map(x => x.id===id ? {...x, limit:r.limit} : x));
       push(r.errors?.length
         ? {type:"warn", title:"Лимит сохранён", detail:`Не все ноды применили: ${r.errors.join("; ")}`}
-        : {type:"ok", title:`Лимит · ${c?.name||""}`, detail:`↓${down} ↑${up} Мбит/с`});
+        : {type:"ok", title:`Лимит · ${c?.label||""}`, detail:`↓${down} ↑${up} Мбит/с`});
     } catch(e) { push({type:"err", title:"Лимит не сохранён", detail:e.message}); }
   };
   const removeLimit = async (id) => {
@@ -405,19 +482,8 @@ function App() {
     try {
       await api.delLimit(id);
       setClients(cs => cs.map(x => x.id===id ? {...x, limit:null} : x));
-      push({type:"warn", title:`Лимит снят · ${c?.name||""}`, detail:"Скорость без ограничений"});
+      push({type:"warn", title:`Лимит снят · ${c?.label||""}`, detail:"Скорость без ограничений"});
     } catch(e) { push({type:"err", title:"Лимит не снят", detail:e.message}); }
-  };
-  const saveMeta=async(id,patch)=>{
-    const c=clients.find(x=>x.id===id);
-    if(!c) return;
-    const p={note:patch.note??"", group:patch.group&&patch.group!=="Без группы"?patch.group:"", expiresAt:patch.expiresAt||null};
-    const oct=patch.ipLastOctet;
-    if(oct!==undefined&&oct!==getLastOctet(c.ip)) p.ip=`${getPrefix(c.ip)}.${oct}`;
-    try{
-      putClient(await api.patchClient(id, p));
-      push(p.ip ? {type:"ok",title:"IP изменён",detail:`${c.name}: ${c.ip} → ${p.ip}`} : {type:"ok",title:"Сохранено",detail:c.name});
-    }catch(e){ push({type:"err",title:"Не сохранено",detail:e.message}); }
   };
 
   // ─── UI atoms ────────────────────────────────────────────────────
@@ -467,11 +533,11 @@ function App() {
   const sideNavProps = {
     page, setPage, setSideOpen, T,
     online, active, stats, fmtBytes, fmtGB, doLogout,
-    clientsCount: clients.length,
+    clientsCount: users.length,
   };
 
-  const PAGE_TITLE={dashboard:"Обзор",clients:"Клиенты",add:"Новый клиент",lists:"Списки",nodes:"Ноды",logs:"Журнал",settings:"Настройки"};
-  const PAGE_SUB={dashboard:"клиенты, трафик и нагрузка",clients:"подключения на всех нодах",add:"профиль создаётся на каждой ноде",lists:"сети и приложения для маршрутизации WireSock",nodes:"VPN-серверы под управлением панели",logs:"действия администраторов и состояние клиентов",settings:"панель, безопасность, уведомления и резервные копии"};
+  const PAGE_TITLE={dashboard:"Обзор",clients:"Пользователи",add:"Новый пользователь",lists:"Списки",nodes:"Ноды",logs:"Журнал",settings:"Настройки"};
+  const PAGE_SUB={dashboard:"пользователи, трафик и нагрузка",clients:"пользователи и их устройства на всех нодах",add:"первое устройство получает профиль на каждой ноде",lists:"сети и приложения для маршрутизации WireSock",nodes:"VPN-серверы под управлением панели",logs:"действия администраторов и состояние устройств",settings:"панель, безопасность, уведомления и резервные копии"};
 
   return(
     <div style={{background:"var(--bg)",color:"var(--text)",minHeight:"100vh",display:"flex",fontFamily:"var(--sans)",fontSize:14}}>
@@ -528,9 +594,9 @@ function App() {
           </nav>
           {/* Живая сводка */}
           <div className="topbar-strip" style={{display:"flex",alignItems:"center",gap:16,fontSize:12,fontFamily:"var(--mono)",flexShrink:0,userSelect:"none"}}>
-            <span title="Клиентов онлайн / всего" style={{display:"flex",alignItems:"center",gap:6,color:"var(--muted)"}}>
+            <span title="Пользователей онлайн / всего" style={{display:"flex",alignItems:"center",gap:6,color:"var(--muted)"}}>
               <span style={{width:8,height:8,borderRadius:"50%",background:online>0?"var(--success)":active>0?"var(--warning)":"var(--disabled)"}}/>
-              <span style={{color:"var(--text)"}}>{online}</span>/{clients.length}
+              <span style={{color:"var(--text)"}}>{online}</span>/{users.length}
             </span>
             <span title="Скачивание клиентов" style={{color:"var(--viz-green)",minWidth:92,textAlign:"right"}}>↓ {fmtBits(txSpd)}</span>
             <span title="Отдача клиентов" style={{color:"var(--viz-blue)",minWidth:92,textAlign:"right"}}>↑ {fmtBits(rxSpd)}</span>
@@ -563,10 +629,10 @@ function App() {
             const top3Half   = clientUsageStore.topN(clientUsage, 3, halfYrFrom, today);
             const top3Year   = clientUsageStore.topN(clientUsage, 3, yearFrom,   today);
 
-            // Аналитика: распределение трафика по клиентам (текущие значения из wg-easy)
+            // Аналитика: распределение трафика по пользователям (текущие значения из wg-easy)
             const totalBytes = clients.reduce((s,c)=>s+(c.tx||0)+(c.rx||0),0);
-            const pieData = clients
-              .map(c=>({name:c.name, bytes:(c.tx||0)+(c.rx||0), color:aColor(c.name)}))
+            const pieData = userRows
+              .map(u=>({name:u.name, bytes:(u.tx||0)+(u.rx||0), color:aColor(u.name)}))
               .filter(x=>x.bytes>0)
               .sort((a,b)=>b.bytes-a.bytes)
               .slice(0,8);
@@ -645,7 +711,7 @@ function App() {
                           <text x="55" y="51" textAnchor="middle" fill="var(--text)"
                             style={{fontSize:"12px",fontWeight:700,fontFamily:"var(--mono)"}}>{pieData.length}</text>
                           <text x="55" y="64" textAnchor="middle" fill="var(--muted)"
-                            style={{fontSize:"10px",fontFamily:"var(--sans)"}}>клиент.</text>
+                            style={{fontSize:"10px",fontFamily:"var(--sans)"}}>польз.</text>
                         </svg>
                         {/* Legend */}
                         <div style={{flex:1,display:"flex",flexDirection:"column",gap:5,minWidth:0}}>
@@ -665,13 +731,13 @@ function App() {
 
                 {/* Онлайн/активность */}
                 <Card style={{flex:"1 1 320px",minWidth:300}}>
-                  <CardH>Статус клиентов</CardH>
+                  <CardH sub="онлайн — хотя бы одно устройство на связи">Статус пользователей</CardH>
                   <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
                     {(()=>{
-                      const onlineN  = clients.filter(c=>c.enabled&&c.handshakeAt&&(Date.now()-new Date(c.handshakeAt))<ONLINE_MS).length;
-                      const idleN    = clients.filter(c=>c.enabled&&!(c.handshakeAt&&(Date.now()-new Date(c.handshakeAt))<ONLINE_MS)).length;
-                      const offN     = clients.filter(c=>!c.enabled).length;
-                      const total    = clients.length || 1;
+                      const onlineN  = userRows.filter(u=>u.online).length;
+                      const idleN    = userRows.filter(u=>u.enabled&&!u.online).length;
+                      const offN     = userRows.filter(u=>!u.enabled).length;
+                      const total    = users.length || 1;
                       const bars = [
                         {label:"Онлайн",  n:onlineN, color:"var(--success)"},
                         {label:"Ожидают",    n:idleN,   color:T.amber},
@@ -681,7 +747,7 @@ function App() {
                         <div key={b.label}>
                           <div style={{display:"flex",justifyContent:"space-between",marginBottom:5,fontSize:12}}>
                             <span style={{color:"var(--text)",fontWeight:600}}>{b.label}</span>
-                            <span style={{color:b.color,fontFamily:"var(--mono)",fontWeight:700}}>{b.n} / {clients.length}</span>
+                            <span style={{color:b.color,fontFamily:"var(--mono)",fontWeight:700}}>{b.n} / {users.length}</span>
                           </div>
                           <div style={{height:6,background:"var(--surface2)",borderRadius:"var(--radius)",overflow:"hidden"}}>
                             <div style={{height:"100%",borderRadius:"var(--radius)",background:b.color,
@@ -723,24 +789,42 @@ function App() {
             const now = Date.now();
             const monthFrom = clientUsageStore.dayKey(now - 30*86400000);
             const monthTo   = clientUsageStore.dayKey(now);
-            const visible=clients.filter(c=>{
-              const m=clientMeta[c.id]||{};
-              const q=searchQ.toLowerCase();
-              return(!q||c.name.toLowerCase().includes(q)||(c.ip||"").includes(q)||(m.note||"").toLowerCase().includes(q)
-                ||(c.uid&&q.length>2&&c.uid.startsWith(q.replace(/^#/,""))))&&(filterGroup==="all"||(m.group||"Без группы")===filterGroup);
+            const q=searchQ.toLowerCase().trim();
+            const qId=q.replace(/^#/,"");
+            // Поиск — по пользователю (имя, заметка, ID) и по его устройствам (название, IP, ID)
+            const visible=userRows.filter(u=>{
+              const hit=!q||u.name.toLowerCase().includes(q)||(u.note||"").toLowerCase().includes(q)
+                ||(qId.length>2&&u.uid.startsWith(qId))
+                ||u.cfgs.some(c=>(c.name||"").toLowerCase().includes(q)||(c.ip||"").includes(q)||(qId.length>2&&(c.uid||"").startsWith(qId)));
+              return hit&&(filterGroup==="all"||(u.group||"Без группы")===filterGroup);
             });
-            // Одинаковые имена разрешены — у таких клиентов ID показывается рядом с именем
-            const nameCount={}; clients.forEach(c=>{const k=(c.name||"").toLowerCase(); nameCount[k]=(nameCount[k]||0)+1;});
+            // Одинаковые имена разрешены — у таких пользователей ID показывается рядом с именем
+            const nameCount={}; users.forEach(u=>{const k=(u.name||"").toLowerCase(); nameCount[k]=(nameCount[k]||0)+1;});
+            const COLS="24px 28px 84px minmax(150px,1.6fr) 96px 80px 80px 80px 80px 72px 84px 156px";
+            const MODE={include:"только списки",exclude:"кроме списков"};
+            const routedOf=(c)=>{ const rt=routingAll[c.id];
+              return rt&&(rt.net_mode!=="all"||rt.app_mode!=="all"||rt.custom)
+                ?[`сети: ${MODE[rt.net_mode]||"все"}`,`приложения: ${MODE[rt.app_mode]||"все"}`,rt.custom?"свои параметры":null].filter(Boolean).join(" · "):null; };
+            const devName=(c,i)=>c.name||`Устройство ${i+1}`;
+            const status=(on,enabled,word)=>{ const col=on?"var(--success)":enabled?"var(--warning)":"var(--disabled)";
+              return <span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,color:col}}>
+                <span style={{width:8,height:8,borderRadius:"50%",background:col,flexShrink:0}}/>{on?"Онлайн":enabled?"Ожидает":word}</span>; };
+            const limitBtn=(c)=>(<button className="crumb" onClick={()=>setEditLimit({id:c.id,ip:c.ip,down:c.limit?.down??5,up:c.limit?.up??5,hasLimit:!!c.limit})} title="Лимит скорости"
+              style={{textAlign:"left",fontSize:12,fontFamily:"var(--mono)",lineHeight:1.4,color:c.limit?"var(--text)":"var(--muted)"}}>
+              {c.limit?<>↓{c.limit.down}M<br/>↑{c.limit.up}M</>:"без лимита"}</button>);
+            const nodesTag=(c)=>(c.nodes||[]).length>1
+              ?<span title={"Профили на нодах:\n"+c.nodes.map(n=>`${n.handshakeAt&&(Date.now()-new Date(n.handshakeAt))<ONLINE_MS?"● ":"○ "}${n.name}`).join("\n")} style={tag("var(--muted)")}>{c.nodes.length} ноды</span>
+              :(c.nodes||[]).length===0?<span title="Профили создаются на нодах — подождите синхронизации" style={tag("var(--warning)")}>нет нод</span>:null;
             return(<div style={{display:"flex",flexDirection:"column",gap:16,width:"100%"}}>
               {/* Toolbar */}
               <div className="clients-toolbar" style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
                 <div style={{position:"relative",flex:"1 1 200px",maxWidth:320}}>
                   <svg style={{position:"absolute",left:8,top:"50%",transform:"translateY(-50%)",color:"var(--muted)",pointerEvents:"none"}} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
-                  <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Поиск по имени, IP, заметке или #ID" style={{width:"100%",paddingLeft:30,display:"block"}}/>
+                  <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Имя, устройство, IP, заметка или #ID" style={{width:"100%",paddingLeft:30,display:"block"}}/>
                 </div>
                 <div className="radio-group" style={{flexWrap:"wrap"}}>
                   {["all",...GROUPS].map(g=>{
-                    const cnt=g==="all"?clients.length:clients.filter(c=>(clientMeta[c.id]?.group||"Без группы")===g).length;
+                    const cnt=g==="all"?users.length:users.filter(u=>(u.group||"Без группы")===g).length;
                     return(<button key={g} onClick={()=>setFilterGroup(g)} className={filterGroup===g?"on":""} style={{height:30,display:"inline-flex",alignItems:"center",gap:6}}>
                       {g!=="all"&&<span style={{width:8,height:8,borderRadius:"50%",background:GC[g]||"var(--disabled)"}}/>}
                       {g==="all"?"Все":g}<span style={{fontFamily:"var(--mono)",color:"var(--muted)"}}>{cnt}</span>
@@ -748,21 +832,21 @@ function App() {
                   })}
                 </div>
                 <span style={{flex:1}}/>
-                <span style={{fontSize:12,color:"var(--muted)",fontFamily:"var(--mono)"}}>{visible.length} из {clients.length}</span>
+                <span style={{fontSize:12,color:"var(--muted)",fontFamily:"var(--mono)"}}>{visible.length} из {users.length} · устройств {clients.length}</span>
                 <Btn v="icon" onClick={loadClients} disabled={cBusy} title="Обновить">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.5 15a9 9 0 1 1-2.1-9.4L23 10"/></svg>
                 </Btn>
-                <Btn v="primary" onClick={()=>setPage("add")}>Новый клиент</Btn>
+                <Btn v="primary" onClick={()=>setPage("add")}>Новый пользователь</Btn>
               </div>
 
               {cErr&&<div className="alert alert-error">{cErr}</div>}
 
               <Card>
                 {/* Table header — desktop only */}
-                <div className="hide-mob th" style={{display:"grid",gridTemplateColumns:"24px 28px 84px minmax(150px,1.6fr) 96px 80px 80px 80px 80px 72px 84px 156px",padding:"8px 12px",borderBottom:"1px solid var(--border)",gap:6,alignItems:"center"}}>
-                  <span style={{textAlign:"center"}}>#</span><span/>
+                <div className="hide-mob th" style={{display:"grid",gridTemplateColumns:COLS,padding:"8px 12px",borderBottom:"1px solid var(--border)",gap:6,alignItems:"center"}}>
+                  <span/><span/>
                   <span>Статус</span>
-                  <span>Клиент</span><span>IP</span>
+                  <span>Пользователь</span><span>IP</span>
                   <span>Отдано</span><span>Получено</span>
                   <span>Всего</span>
                   <span>За месяц</span>
@@ -772,99 +856,131 @@ function App() {
                 </div>
 
                 {cBusy&&<div style={{display:"flex",alignItems:"center",gap:10,padding:"24px 16px",color:"var(--muted)",fontSize:14}}><div style={{width:14,height:14,border:"2px solid var(--border-medium)",borderTopColor:"var(--primary)",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>Загрузка…</div>}
-                {!cBusy&&visible.length===0&&<div style={{padding:"48px 16px",textAlign:"center"}}><div style={{fontSize:16,marginBottom:8}}>{clients.length===0?"Клиентов пока нет":"Ничего не найдено"}</div>{clients.length===0&&<><div style={{fontSize:14,color:"var(--muted)",marginBottom:16}}>Профиль клиента создаётся сразу на всех нодах</div><Btn v="primary" onClick={()=>setPage("add")}>Создать клиента</Btn></>}</div>}
+                {!cBusy&&visible.length===0&&<div style={{padding:"48px 16px",textAlign:"center"}}><div style={{fontSize:16,marginBottom:8}}>{users.length===0?"Пользователей пока нет":"Ничего не найдено"}</div>{users.length===0&&<><div style={{fontSize:14,color:"var(--muted)",marginBottom:16}}>У пользователя может быть несколько устройств; профиль каждого создаётся сразу на всех нодах</div><Btn v="primary" onClick={()=>setPage("add")}>Создать пользователя</Btn></>}</div>}
 
-                {!cBusy&&visible.map((c,idx)=>{
-                  const ip=(c.ip||"").replace("/32","");
-                  const on=c.enabled&&c.handshakeAt&&(Date.now()-new Date(c.handshakeAt))<ONLINE_MS;
-                  const m=clientMeta[c.id]||{};
-                  const grpC=GC[m.group||"Без группы"]||"var(--muted)";
-                  const rt=routingAll[c.id];
-                  const MODE={include:"только списки",exclude:"кроме списков"};
-                  const routed=rt&&(rt.net_mode!=="all"||rt.app_mode!=="all"||rt.custom)
-                    ?[`сети: ${MODE[rt.net_mode]||"все"}`,`приложения: ${MODE[rt.app_mode]||"все"}`,rt.custom?"свои параметры":null].filter(Boolean).join(" · "):null;
-                  const expired=m.expiresAt&&new Date(m.expiresAt)<new Date();
-                  const expWarn=!expired&&m.expiresAt&&Math.ceil((new Date(m.expiresAt)-Date.now())/86400000)<7;
-                  const lim=c.limit;
-                  const days=m.expiresAt?Math.ceil((new Date(m.expiresAt)-Date.now())/86400000):null;
-                  const stC=on?"var(--success)":c.enabled?"var(--warning)":"var(--disabled)";
-                  return(<div key={c.id} className="rh" style={{borderBottom:"1px solid var(--border)"}}>
-                    {/* Desktop row */}
-                    <div className="hide-mob" style={{display:"grid",gridTemplateColumns:"24px 28px 84px minmax(150px,1.6fr) 96px 80px 80px 80px 80px 72px 84px 156px",padding:"6px 12px",minHeight:44,alignItems:"center",gap:6,fontSize:14}}>
-                      <span style={{fontSize:12,color:"var(--muted)",fontFamily:"var(--mono)",textAlign:"center"}}>{idx+1}</span>
-                      <div style={{width:24,height:24,borderRadius:"50%",background:aColor(c.name),display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:500,color:"#fff"}}>{(c.name||"?").charAt(0).toUpperCase()}</div>
-                      <span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,color:stC}}>
-                        <span style={{width:8,height:8,borderRadius:"50%",background:stC,flexShrink:0}}/>
-                        {on?"Онлайн":c.enabled?"Ожидает":"Выключен"}
-                      </span>
+                {!cBusy&&visible.map(u=>{
+                  const open=expanded.has(u.id)||(!!q&&u.cfgs.length>1);
+                  const single=u.cfgs.length===1?u.cfgs[0]:null;
+                  const grpC=GC[u.group||"Без группы"]||"var(--muted)";
+                  const expired=u.expiresAt&&new Date(u.expiresAt)<new Date();
+                  const days=u.expiresAt?Math.ceil((new Date(u.expiresAt)-Date.now())/86400000):null;
+                  const ips=u.cfgs.map(c=>c.ip).filter(Boolean);
+                  const dupName=nameCount[(u.name||"").toLowerCase()]>1;
+                  const monthB=clientUsageStore.sumForClient(clientUsage,u.id,monthFrom,monthTo);
+                  const tags=<>
+                    {u.group&&<span style={tag(grpC)}>{u.group}</span>}
+                    {u.cfgs.length!==1&&<button onClick={()=>toggleExpand(u.id)} title={open?"Скрыть устройства":"Показать устройства"} style={{...tag(u.cfgs.length?"var(--cyan)":"var(--warning)"),cursor:"pointer"}}>{u.cfgs.length?`${u.cfgs.length} устр.`:"нет устройств"}</button>}
+                    {expired&&<span style={tag("var(--error)")}>истёк</span>}
+                    {!expired&&days!=null&&<span title={`Доступ до ${new Date(u.expiresAt).toLocaleDateString("ru")}`} style={tag(days<3?"var(--error)":days<7?"var(--warning)":"var(--success)")}>{days} д</span>}
+                  </>;
+                  const qrUser=()=>single?setQrClient(single):toggleExpand(u.id);
+                  return(<div key={u.id} style={{borderBottom:"1px solid var(--border)"}}>
+                    {/* Desktop: строка пользователя */}
+                    <div className="hide-mob rh" style={{display:"grid",gridTemplateColumns:COLS,padding:"6px 12px",minHeight:44,alignItems:"center",gap:6,fontSize:14}}>
+                      <button className="tb-btn" onClick={()=>toggleExpand(u.id)} title={open?"Скрыть устройства":"Показать устройства"} style={{width:24,height:24}}>{open?IC.chevD:IC.chevR}</button>
+                      <div style={{width:24,height:24,borderRadius:"50%",background:aColor(u.name),display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:500,color:"#fff"}}>{(u.name||"?").charAt(0).toUpperCase()}</div>
+                      {status(u.online,u.enabled,"Выключен")}
                       <div style={{minWidth:0}}>
                         <div style={{display:"flex",alignItems:"center",gap:4,overflow:"hidden"}}>
-                          <span style={{fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
-                          {m.group&&m.group!=="Без группы"&&<span style={tag(grpC)}>{m.group}</span>}
-                          {routed&&<span title={routed} style={tag("var(--cyan)")}>WS</span>}
-                          {(c.nodes||[]).length>1&&<span title={"Профили на нодах:\n"+c.nodes.map(n=>`${n.handshakeAt&&(Date.now()-new Date(n.handshakeAt))<ONLINE_MS?"● ":"○ "}${n.name}`).join("\n")} style={tag("var(--muted)")}>{c.nodes.length} ноды</span>}
-                          {(c.nodes||[]).length===0&&<span title="Профили создаются на нодах — подождите синхронизации" style={tag("var(--warning)")}>нет нод</span>}
-                          {expired&&<span style={tag("var(--error)")}>истёк</span>}
-                          {!expired&&days!=null&&<span title={`Доступ до ${new Date(m.expiresAt).toLocaleDateString("ru")}`} style={tag(days<3?"var(--error)":days<7?"var(--warning)":"var(--success)")}>{days} д</span>}
+                          <span style={{fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.name}</span>
+                          {tags}
+                          {single&&routedOf(single)&&<span title={routedOf(single)} style={tag("var(--cyan)")}>WS</span>}
+                          {single&&nodesTag(single)}
                         </div>
-                        {(m.note||nameCount[(c.name||"").toLowerCase()]>1)&&<div style={{fontSize:12,color:"var(--muted)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                          {nameCount[(c.name||"").toLowerCase()]>1&&c.uid&&<span title="ID клиента — различает одинаковые имена" style={{fontFamily:"var(--mono)",marginRight:6,color:"var(--cyan)"}}>#{c.uid}</span>}
-                          {m.note}
+                        {(u.note||dupName||(single&&single.name))&&<div style={{fontSize:12,color:"var(--muted)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                          {dupName&&<span title="ID пользователя — различает одинаковые имена" style={{fontFamily:"var(--mono)",marginRight:6,color:"var(--cyan)"}}>#{u.uid}</span>}
+                          {single&&single.name&&<span style={{marginRight:6}}>📱 {single.name}</span>}
+                          {u.note}
                         </div>}
                       </div>
-                      <span style={{fontFamily:"var(--mono)",fontSize:12}}>{ip}</span>
-                      <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--muted)"}}>{fmtBytes(c.tx||0)}</span>
-                      <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--muted)"}}>{fmtBytes(c.rx||0)}</span>
-                      <span style={{fontFamily:"var(--mono)",fontSize:12}}>{fmtGB((c.tx||0)+(c.rx||0))}</span>
-                      <span style={{fontFamily:"var(--mono)",fontSize:12}}>
-                        {(()=>{const b=clientUsageStore.sumForClient(clientUsage,c.id,monthFrom,monthTo);return b>0?fmtBytes(b):"—";})()}
-                      </span>
+                      <span title={ips.join("\n")} style={{fontFamily:"var(--mono)",fontSize:12}}>{ips[0]||"—"}{ips.length>1&&<span style={{color:"var(--muted)"}}> +{ips.length-1}</span>}</span>
+                      <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--muted)"}}>{fmtBytes(u.tx)}</span>
+                      <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--muted)"}}>{fmtBytes(u.rx)}</span>
+                      <span style={{fontFamily:"var(--mono)",fontSize:12}}>{fmtGB(u.tx+u.rx)}</span>
+                      <span style={{fontFamily:"var(--mono)",fontSize:12}}>{monthB>0?fmtBytes(monthB):"—"}</span>
                       <span style={{fontSize:12,color:"var(--muted)",fontFamily:"var(--mono)"}}>
-                        {m.createdAt ? new Date(m.createdAt).toLocaleDateString("ru",{day:"2-digit",month:"2-digit",year:"2-digit",timeZone:getPanelTz()}) : "—"}
+                        {u.created ? new Date(u.created).toLocaleDateString("ru",{day:"2-digit",month:"2-digit",year:"2-digit",timeZone:getPanelTz()}) : "—"}
                       </span>
-                      <button className="crumb" onClick={()=>setEditLimit({id:c.id,ip:c.ip,down:lim?.down??5,up:lim?.up??5,hasLimit:!!lim})} title="Лимит скорости"
-                        style={{textAlign:"left",fontSize:12,fontFamily:"var(--mono)",lineHeight:1.4,color:lim?"var(--text)":"var(--muted)"}}>
-                        {lim?<>↓{lim.down}M<br/>↑{lim.up}M</>:"без лимита"}
-                      </button>
+                      {single?limitBtn(single):<span style={{fontSize:12,color:"var(--muted)"}}>{u.cfgs.length?"у устройств":"—"}</span>}
                       <div style={{display:"flex",gap:4,justifyContent:"flex-end"}}>
-                        <Btn v="icon" onClick={()=>setQrClient(c)} title="Конфиг и QR-код" style={{width:28,height:28}}>{IC.qr}</Btn>
-                        <Btn v="icon" onClick={()=>setEditMeta(c)} title="Редактировать" style={{width:28,height:28}}>{IC.edit}</Btn>
-                        <Btn v="icon" onClick={()=>setEditRouting(c)} title="Маршрутизация (WireSock)" style={{width:28,height:28}}>{IC.route}</Btn>
-                        <Btn v="icon" onClick={()=>toggleClient(c)} title={c.enabled?"Отключить":"Включить"} style={{width:28,height:28}}>{c.enabled?IC.pause:IC.play}</Btn>
-                        <Btn v="danger" onClick={()=>delClient(c)} title="Удалить" style={{width:28,height:28,padding:0}}>{IC.trash}</Btn>
+                        <Btn v="icon" onClick={qrUser} disabled={!u.cfgs.length} title={single?"Конфиг и QR-код":"Конфиги — по устройствам"} style={{width:28,height:28}}>{IC.qr}</Btn>
+                        <Btn v="icon" onClick={()=>setEditUser(u)} title="Пользователь: имя, группа, срок, квота" style={{width:28,height:28}}>{IC.edit}</Btn>
+                        <Btn v="icon" onClick={()=>setEditConfig({user:u})} title="Добавить устройство" style={{width:28,height:28}}>{IC.plus}</Btn>
+                        <Btn v="icon" onClick={()=>toggleUser(u)} title={u.enabled?"Отключить пользователя (все устройства)":"Включить пользователя"} style={{width:28,height:28}}>{u.enabled?IC.pause:IC.play}</Btn>
+                        <Btn v="danger" onClick={()=>delUser(u)} title="Удалить пользователя и все устройства" style={{width:28,height:28,padding:0}}>{IC.trash}</Btn>
                       </div>
                     </div>
 
-                    {/* Mobile card */}
+                    {/* Desktop: устройства пользователя */}
+                    {open&&u.cfgs.map((c,i)=>{
+                      const routed=routedOf(c);
+                      return(<div key={c.id} className="hide-mob rh" style={{display:"grid",gridTemplateColumns:COLS,padding:"4px 12px",minHeight:38,alignItems:"center",gap:6,fontSize:14,background:"var(--surface2)",borderTop:"1px solid var(--border)"}}>
+                        <span/>
+                        <span style={{display:"flex",justifyContent:"center",color:"var(--muted)"}}>{IC.device}</span>
+                        {status(isOnline(c),c.active,"Выключено")}
+                        <div style={{minWidth:0,display:"flex",alignItems:"center",gap:4,overflow:"hidden"}}>
+                          <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:c.name?"var(--text)":"var(--muted)"}}>{devName(c,i)}</span>
+                          {routed&&<span title={routed} style={tag("var(--cyan)")}>WS</span>}
+                          {nodesTag(c)}
+                        </div>
+                        <span style={{fontFamily:"var(--mono)",fontSize:12}}>{c.ip}</span>
+                        <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--muted)"}}>{fmtBytes(c.tx||0)}</span>
+                        <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--muted)"}}>{fmtBytes(c.rx||0)}</span>
+                        <span style={{fontFamily:"var(--mono)",fontSize:12}}>{fmtGB((c.tx||0)+(c.rx||0))}</span>
+                        <span/>
+                        <span style={{fontSize:12,color:"var(--muted)",fontFamily:"var(--mono)"}}>
+                          {c.createdAt ? new Date(c.createdAt.replace(" ","T")+"Z").toLocaleDateString("ru",{day:"2-digit",month:"2-digit",year:"2-digit",timeZone:getPanelTz()}) : "—"}
+                        </span>
+                        {limitBtn(c)}
+                        <div style={{display:"flex",gap:4,justifyContent:"flex-end"}}>
+                          <Btn v="icon" onClick={()=>setQrClient(c)} title="Конфиг и QR-код" style={{width:28,height:28}}>{IC.qr}</Btn>
+                          <Btn v="icon" onClick={()=>setEditConfig({config:c})} title="Устройство: название и IP" style={{width:28,height:28}}>{IC.edit}</Btn>
+                          <Btn v="icon" onClick={()=>setEditRouting(c)} title="Маршрутизация (WireSock)" style={{width:28,height:28}}>{IC.route}</Btn>
+                          <Btn v="icon" onClick={()=>toggleClient(c)} title={c.enabled?"Отключить устройство":"Включить устройство"} style={{width:28,height:28}}>{c.enabled?IC.pause:IC.play}</Btn>
+                          <Btn v="danger" onClick={()=>delClient(c)} title="Удалить устройство" style={{width:28,height:28,padding:0}}>{IC.trash}</Btn>
+                        </div>
+                      </div>);
+                    })}
+
+                    {/* Mobile: карточка пользователя и его устройства */}
                     <div className="mob-btn" style={{display:"none",padding:"12px 16px",flexDirection:"column",gap:8}}>
                       <div style={{display:"flex",alignItems:"center",gap:10}}>
-                        <div style={{width:32,height:32,borderRadius:"50%",background:aColor(c.name),display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:500,color:"#fff",flexShrink:0}}>{(c.name||"?").charAt(0).toUpperCase()}</div>
+                        <div style={{width:32,height:32,borderRadius:"50%",background:aColor(u.name),display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:500,color:"#fff",flexShrink:0}}>{(u.name||"?").charAt(0).toUpperCase()}</div>
                         <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontWeight:500,fontSize:14,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                            {c.name}
-                            {m.group&&m.group!=="Без группы"&&<span style={tag(grpC)}>{m.group}</span>}
-                            {expired&&<span style={tag("var(--error)")}>истёк</span>}
-                          </div>
-                          <div style={{fontSize:12,color:"var(--muted)",fontFamily:"var(--mono)"}}>{ip}</div>
+                          <div style={{fontWeight:500,fontSize:14,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>{u.name}{tags}</div>
+                          <div style={{fontSize:12,color:"var(--muted)",fontFamily:"var(--mono)"}}>{ips.join(", ")||"—"}</div>
                         </div>
-                        <span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12,color:stC}}>
-                          <span style={{width:8,height:8,borderRadius:"50%",background:stC}}/>{on?"Онлайн":c.enabled?"Ожидает":"Выключен"}
-                        </span>
+                        {status(u.online,u.enabled,"Выключен")}
                       </div>
                       <div style={{display:"flex",gap:12,fontSize:12,fontFamily:"var(--mono)",color:"var(--muted)",flexWrap:"wrap"}}>
-                        <span>↑ {fmtBytes(c.tx||0)}</span>
-                        <span>↓ {fmtBytes(c.rx||0)}</span>
-                        <span style={{color:"var(--text)"}}>Σ {fmtGB((c.tx||0)+(c.rx||0))}</span>
-                        {lim&&<span>лимит ↓{lim.down} ↑{lim.up} Мбит/с</span>}
+                        <span>↑ {fmtBytes(u.tx)}</span>
+                        <span>↓ {fmtBytes(u.rx)}</span>
+                        <span style={{color:"var(--text)"}}>Σ {fmtGB(u.tx+u.rx)}</span>
                       </div>
                       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                        <Btn v="primary" onClick={()=>setQrClient(c)} style={{flex:1}}>Конфиг</Btn>
-                        <Btn v="icon" onClick={()=>setEditMeta(c)} title="Редактировать">{IC.edit}</Btn>
-                        <Btn v="icon" onClick={()=>setEditRouting(c)} title="Маршрутизация">{IC.route}</Btn>
-                        <Btn v="icon" onClick={()=>setEditLimit({id:c.id,ip:c.ip,down:lim?.down??5,up:lim?.up??5,hasLimit:!!lim})} title="Лимит скорости">{IC.gauge}</Btn>
-                        <Btn v="icon" onClick={()=>toggleClient(c)} title={c.enabled?"Отключить":"Включить"}>{c.enabled?IC.pause:IC.play}</Btn>
-                        <Btn v="danger" onClick={()=>delClient(c)} title="Удалить" style={{width:32,padding:0}}>{IC.trash}</Btn>
+                        {single&&<Btn v="primary" onClick={()=>setQrClient(single)} style={{flex:1}}>Конфиг</Btn>}
+                        {!single&&<Btn v="ghost" onClick={()=>toggleExpand(u.id)} style={{flex:1}}>{open?"Скрыть устройства":"Устройства"}</Btn>}
+                        <Btn v="icon" onClick={()=>setEditUser(u)} title="Пользователь">{IC.edit}</Btn>
+                        <Btn v="icon" onClick={()=>setEditConfig({user:u})} title="Добавить устройство">{IC.plus}</Btn>
+                        <Btn v="icon" onClick={()=>toggleUser(u)} title={u.enabled?"Отключить":"Включить"}>{u.enabled?IC.pause:IC.play}</Btn>
+                        <Btn v="danger" onClick={()=>delUser(u)} title="Удалить" style={{width:32,padding:0}}>{IC.trash}</Btn>
                       </div>
+                      {(open||single)&&u.cfgs.map((c,i)=>(<div key={c.id} style={{display:"flex",flexDirection:"column",gap:6,padding:"8px 10px",background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:"var(--radius)"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,fontSize:14}}>
+                          <span style={{color:"var(--muted)",display:"flex"}}>{IC.device}</span>
+                          <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{devName(c,i)}</span>
+                          <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--muted)"}}>{c.ip}</span>
+                          {status(isOnline(c),c.active,"Выключено")}
+                        </div>
+                        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                          {!single&&<Btn v="primary" onClick={()=>setQrClient(c)} style={{flex:1}}>Конфиг</Btn>}
+                          <Btn v="icon" onClick={()=>setEditConfig({config:c})} title="Устройство">{IC.edit}</Btn>
+                          <Btn v="icon" onClick={()=>setEditRouting(c)} title="Маршрутизация">{IC.route}</Btn>
+                          <Btn v="icon" onClick={()=>setEditLimit({id:c.id,ip:c.ip,down:c.limit?.down??5,up:c.limit?.up??5,hasLimit:!!c.limit})} title="Лимит скорости">{IC.gauge}</Btn>
+                          <Btn v="icon" onClick={()=>toggleClient(c)} title={c.enabled?"Отключить устройство":"Включить устройство"}>{c.enabled?IC.pause:IC.play}</Btn>
+                          <Btn v="danger" onClick={()=>delClient(c)} title="Удалить устройство" style={{width:32,padding:0}}>{IC.trash}</Btn>
+                        </div>
+                      </div>))}
                     </div>
                   </div>);
                 })}
@@ -873,7 +989,7 @@ function App() {
           })()}
 
           {/* ──────────────────── ADD ──────────────────── */}
-          {page==="add"&&<div className="page-form" style={{display:"flex",justifyContent:"center",width:"100%"}}><AddClientPage push={push} setQrClient={setQrClient} setPage={setPage} clients={clients} onCreated={c=>setClients(cs=>[...cs.filter(x=>x.id!==c.id),c])}/></div>}
+          {page==="add"&&<div className="page-form" style={{display:"flex",justifyContent:"center",width:"100%"}}><AddClientPage push={push} setQrClient={setQrClient} setPage={setPage} clients={clients} onCreated={c=>{ setClients(cs=>[...cs.filter(x=>x.id!==c.id),c]); api.users().then(us=>setUsers(us||[])).catch(()=>{}); }}/></div>}
 
           {/* ──────────────────── LISTS ──────────────────── */}
           {page==="lists"&&<ListsPage push={push} setConfirmModal={setConfirmModal} onChanged={loadRouting}/>}
@@ -893,12 +1009,12 @@ function App() {
               <CardH sub="применяется на ноде сразу после сохранения">Лимиты скорости</CardH>
               <div style={{padding:"12px 18px"}}>
                 {Object.keys(limits).length===0
-                  ?<div style={{fontSize:14,color:"var(--muted)",padding:"4px 0",lineHeight:1.7}}>Лимиты не установлены. Задаются в колонке «Лимит» на странице «Клиенты».</div>
+                  ?<div style={{fontSize:14,color:"var(--muted)",padding:"4px 0",lineHeight:1.7}}>Лимиты не установлены. Задаются для каждого устройства в колонке «Лимит» на странице «Пользователи».</div>
                   :<div>{clients.filter(c=>c.limit).map(c=>{const ip=c.ip,cfg=c.limit;return(<div key={c.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:`1px solid ${T.border}`,fontSize:14}}>
                     <span style={{fontFamily:"var(--mono)",color:T.cyan,flex:1}}>{ip}</span>
                     <span style={{color:T.amber,fontFamily:"var(--mono)"}}>↓{cfg.down}M</span>
                     <span style={{color:"var(--muted)",fontFamily:"var(--mono)"}}>↑{cfg.up}M</span>
-                    <span style={{color:"var(--muted)"}}>{c.name}</span>
+                    <span style={{color:"var(--muted)"}}>{c.label}</span>
                     <button onClick={()=>removeLimit(c.id)} title="Снять лимит" style={{background:"none",border:"none",color:"var(--error)",cursor:"pointer",fontSize:16,padding:"0 4px"}}>✕</button>
                   </div>);})}</div>}
               </div>
@@ -918,10 +1034,10 @@ function App() {
               return tb - ta;
             });
             const now = Date.now();
-            const onlineList  = logClients.filter(c=>c.enabled&&c.handshakeAt&&(now-new Date(c.handshakeAt))<ONLINE_MS);
+            const onlineList  = logClients.filter(isOnline);
             const recentList  = logClients.filter(c=>c.handshakeAt&&(now-new Date(c.handshakeAt))<3600000&&!onlineList.includes(c));
-            const expiredList = logClients.filter(c=>{ const m=clientMeta[c.id]||{}; return m.expiresAt&&new Date(m.expiresAt)<new Date(); });
-            const noLimitList = logClients.filter(c=>{ const ip=c.ip; return c.enabled&&ip&&!c.limit; });
+            const expiredList = users.filter(u=>u.expiresAt&&new Date(u.expiresAt)<new Date());
+            const noLimitList = logClients.filter(c=>{ const ip=c.ip; return c.active&&ip&&!c.limit; });
             const LEVEL_CFG = {
               OK:   {bg:"color-mix(in srgb,var(--success) 10%,transparent)",  border:"color-mix(in srgb,var(--success) 25%,transparent)",  text:"var(--success)",  dot:"var(--success)"},
               INFO: {bg:`color-mix(in srgb,var(--cyan) 8%,transparent)`, border:`color-mix(in srgb,var(--cyan) 20%,transparent)`,  text:T.cyan,     dot:T.cyan},
@@ -964,7 +1080,7 @@ function App() {
                 <div style={{padding:"8px 18px 12px"}}>
                   {[
                     stats&&{level:"OK", msg:`CPU ${Math.round(stats.cpu)}%  ·  RAM ${Math.round(stats.ram_pct)}% (${fmtGB(stats.ram_used)})  ·  Диск ${Math.round(stats.disk_pct)}% (${fmtGB(stats.disk_used)} / ${fmtGB(stats.disk_total)})`, sub:`Load avg: ${stats.load1}`},
-                    {level:"INFO", msg:`Клиентов: ${clients.length}  ·  активных: ${active}  ·  онлайн: ${online}`, sub:`TX всего: ${fmtBytes(totalTx)}  ·  RX всего: ${fmtBytes(totalRx)}`},
+                    {level:"INFO", msg:`Пользователей: ${users.length}  ·  активных: ${active}  ·  онлайн: ${online}  ·  устройств: ${clients.length}`, sub:`TX всего: ${fmtBytes(totalTx)}  ·  RX всего: ${fmtBytes(totalRx)}`},
                     config.wg_host&&{level:"INFO", msg:`${config.wg_port?`WireGuard: ${config.wg_host}:${config.wg_port}/udp  ·  `:""}Web UI: ${config.wg_host}:${config.web_port}`, sub:`Tunnelwright Panel AWG v${APP_VERSION}`},
                     tg&&(tg.active
                       ?{level:"OK", msg:"Telegram уведомления активны",
@@ -972,20 +1088,20 @@ function App() {
                       :(tg.token_set
                         ?{level:"WARN", msg:"Telegram настроен но отключён", sub:"Включите уведомления в разделе Настройки"}
                         :{level:"WARN", msg:"Telegram не настроен", sub:"Добавьте бота в разделе Настройки → Telegram"})),
-                    {level:Object.keys(limits).length>0?"OK":"WARN", msg:`Лимиты скорости: ${Object.keys(limits).length} клиент(ов)`, sub:Object.keys(limits).length>0?Object.entries(limits).slice(0,3).map(([ip,l])=>`${ip}: ↓${l.down}M ↑${l.up}M`).join("  ·  ")+(Object.keys(limits).length>3?`  +${Object.keys(limits).length-3} ещё`:""):"Лимиты не установлены"},
+                    {level:Object.keys(limits).length>0?"OK":"WARN", msg:`Лимиты скорости: ${Object.keys(limits).length} устр.`, sub:Object.keys(limits).length>0?Object.entries(limits).slice(0,3).map(([ip,l])=>`${ip}: ↓${l.down}M ↑${l.up}M`).join("  ·  ")+(Object.keys(limits).length>3?`  +${Object.keys(limits).length-3} ещё`:""):"Лимиты не установлены"},
                   ].filter(Boolean).map((r,i)=><Row key={i} {...r}/>)}
                 </div>
               </Card>
 
               {/* ── Онлайн прямо сейчас ── */}
               {onlineList.length>0&&<Card>
-                <CardH sub={`${onlineList.length} клиент(ов) активны прямо сейчас`}>Online сейчас</CardH>
+                <CardH sub={`${onlineList.length} устр. на связи прямо сейчас`}>Online сейчас</CardH>
                 <div style={{padding:"8px 18px 12px"}}>
                   {onlineList.map(c=>{
                     const ip=c.ip;
-                    const m=clientMeta[c.id]||{};
+                    const m=usersById[c.userId]||{};
                     return <Row key={c.id} level="OK"
-                      msg={`${c.name}  ·  ${ip}`}
+                      msg={`${c.label}  ·  ${ip}`}
                       sub={`Хендшейк: ${fmtAgo(c.handshakeAt)}  ·  TX: ${fmtBytes(c.tx||0)}  ·  RX: ${fmtBytes(c.rx||0)}${m.group&&m.group!=="Без группы"?" · "+m.group:""}`}/>;
                   })}
                 </div>
@@ -998,7 +1114,7 @@ function App() {
                   {recentList.slice(0,8).map(c=>{
                     const ip=c.ip;
                     return <Row key={c.id} level="INFO"
-                      msg={`${c.name}  ·  ${ip}`}
+                      msg={`${c.label}  ·  ${ip}`}
                       sub={`Последний сеанс: ${fmtAgo(c.handshakeAt)}  ·  TX: ${fmtBytes(c.tx||0)}  ·  RX: ${fmtBytes(c.rx||0)}`}/>;
                   })}
                 </div>
@@ -1008,27 +1124,26 @@ function App() {
               {(expiredList.length>0||noLimitList.length>0)&&<Card>
                 <CardH sub="требуют внимания">Предупреждения</CardH>
                 <div style={{padding:"8px 18px 12px"}}>
-                  {expiredList.map(c=><Row key={"exp-"+c.id} level="WARN"
-                    msg={`Срок доступа истёк: ${c.name}`}
-                    sub={`IP: ${c.ip}  ·  Истёк: ${new Date(clientMeta[c.id]?.expiresAt).toLocaleDateString("ru")}`}/>)}
+                  {expiredList.map(u=><Row key={"exp-"+u.id} level="WARN" msg={`Срок доступа истёк: ${u.name}`}
+                    sub={`Устройств: ${u.configs.length}  ·  Истёк: ${new Date(u.expiresAt).toLocaleDateString("ru")}`}/>)}
                   {noLimitList.map(c=><Row key={"nl-"+c.id} level="WARN"
-                    msg={`Без лимита скорости: ${c.name}`}
+                    msg={`Без лимита скорости: ${c.label}`}
                     sub={`IP: ${c.ip}  ·  Трафик не ограничен`}/>)}
                 </div>
               </Card>}
 
-              {/* ── Все клиенты — сортировка по активности ── */}
+              {/* ── Все устройства — сортировка по активности ── */}
               <Card>
-                <CardH sub="сортировка по последнему хендшейку">Все клиенты</CardH>
+                <CardH sub="сортировка по последнему хендшейку">Все устройства</CardH>
                 <div style={{padding:"8px 18px 12px"}}>
                   {logClients.map(c=>{
                     const ip=c.ip;
-                    const m=clientMeta[c.id]||{};
+                    const m=usersById[c.userId]||{};
                     const lim=c.limit;
-                    const isOnline=c.enabled&&c.handshakeAt&&(now-new Date(c.handshakeAt))<ONLINE_MS;
-                    const level=!c.enabled?"WARN":isOnline?"OK":"INFO";
+                    const on=isOnline(c);
+                    const level=!c.active?"WARN":on?"OK":"INFO";
                     return <Row key={c.id} level={level}
-                      msg={`${c.name}  ·  ${ip}${!c.enabled?" · [отключён]":""}`}
+                      msg={`${c.label}  ·  ${ip}${!c.active?" · [отключено]":""}`}
                       sub={[
                         c.handshakeAt?`Последний сеанс: ${fmtAgo(c.handshakeAt)}`:"Никогда не подключался",
                         `TX: ${fmtBytes(c.tx||0)}  RX: ${fmtBytes(c.rx||0)}`,
@@ -1049,7 +1164,8 @@ function App() {
       {/* Modals */}
       {qrClient&&<QRModal client={qrClient} onClose={()=>setQrClient(null)}/>}
       {editLimit&&<LimitModal data={editLimit} onSave={(_ip,d,u)=>updateLimit(editLimit.id,d,u)} onRemove={()=>removeLimit(editLimit.id)} onClose={()=>setEditLimit(null)}/>}
-      {editMeta&&<MetaModal client={editMeta} meta={clientMeta[editMeta.id]||{}} allClients={clients} onSave={(p)=>saveMeta(editMeta.id,p)} onClose={()=>setEditMeta(null)}/>}
+      {editUser&&<UserModal user={editUser} users={users} onSave={(p)=>saveUser(editUser.id,p)} onMerge={(other)=>mergeUser(editUser,other)} onClose={()=>setEditUser(null)}/>}
+      {editConfig&&<ConfigModal config={editConfig.config} user={editConfig.user} allClients={clients} onSave={(p)=>saveConfig(editConfig,p)} onClose={()=>setEditConfig(null)}/>}
       {editRouting&&<RoutingModal client={editRouting} push={push} setPage={setPage} onSaved={loadRouting} onClose={()=>setEditRouting(null)}/>}
       {confirmModal&&<ConfirmModal title={confirmModal.title} detail={confirmModal.detail} confirmLabel={confirmModal.confirmLabel} onConfirm={confirmModal.onConfirm} onClose={()=>setConfirmModal(null)}/>}
       <Stack/>

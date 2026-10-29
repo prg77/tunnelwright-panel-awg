@@ -11,7 +11,7 @@ from .conftest import login
 
 @pytest.fixture()
 def node(client, cluster, monkeypatch):
-    """Локальная нода с тремя клиентами; сообщения Telegram — в node.sent."""
+    """Локальная нода с тремя клиентами (в панели — три пользователя); сообщения Telegram — в node.sent."""
     agent = cluster[cluster.local]
     for i, name in enumerate(("Маша телефон", "Маша ноутбук", "Петя"), 5):
         agent.add(name, f"10.8.0.{i}")
@@ -23,7 +23,7 @@ def node(client, cluster, monkeypatch):
         return True
     monkeypatch.setattr(telegram, "send", fake_send)
     agent.sent = sent
-    agent.pid = {r["name"]: r["id"] for r in db.query("SELECT id, name FROM clients")}
+    agent.pid = {r["name"]: r["id"] for r in db.query("SELECT id, name FROM users")}    # id пользователей
     return agent
 
 
@@ -75,26 +75,27 @@ def test_quota_warn_block_and_monthly_reset(node):
     tz = "Europe/Moscow"
     m = quotas.month(tz)
     quotas.set_quota(pid, 1000)
-    db.execute("INSERT INTO traffic_daily(client_id, day, rx, tx) VALUES(?,?,?,?)", (pid, f"{m}-02", 500, 350))
+    cfg = db.one("SELECT id FROM clients WHERE user_id=?", (pid,))["id"]
+    db.execute("INSERT INTO traffic_daily(client_id, day, rx, tx) VALUES(?,?,?,?)", (cfg, f"{m}-02", 500, 350))
     asyncio.run(quotas.check(tz))
     assert any("85 %" in t for t in node.sent) and node.by_ip("10.8.0.7")["enabled"]
 
-    db.execute("UPDATE traffic_daily SET rx=900 WHERE client_id=?", (pid,))
+    db.execute("UPDATE traffic_daily SET rx=900 WHERE client_id=?", (cfg,))
     asyncio.run(quotas.check(tz))
     assert not node.by_ip("10.8.0.7")["enabled"] and quotas.get_all(tz)[str(pid)]["blocked"]
 
-    db.execute("UPDATE quotas SET blocked='2000-01' WHERE client_id=?", (pid,))   # «наступил новый месяц»
+    db.execute("UPDATE quotas SET blocked='2000-01' WHERE user_id=?", (pid,))   # «наступил новый месяц»
     asyncio.run(quotas.check(tz))
     assert node.by_ip("10.8.0.7")["enabled"] and db.one("SELECT blocked FROM quotas")["blocked"] is None
 
 
 def test_quota_api(node, client):
     pid = node.pid["Петя"]
-    assert client.put(f"/api/clients/{pid}/quota", json={"limit_gb": 50}).status_code == 401
+    assert client.put(f"/api/users/{pid}/quota", json={"limit_gb": 50}).status_code == 401
     login(client)
-    assert client.put(f"/api/clients/{pid}/quota", json={"limit_gb": 50}).status_code == 200
+    assert client.put(f"/api/users/{pid}/quota", json={"limit_gb": 50}).status_code == 200
     assert client.get("/api/quotas").json()[str(pid)]["limit_bytes"] == 50 * 1024**3
-    client.put(f"/api/clients/{pid}/quota", json={"limit_gb": None})
+    client.put(f"/api/users/{pid}/quota", json={"limit_gb": None})
     assert client.get("/api/quotas").json() == {}
 
 
@@ -113,7 +114,7 @@ def test_bot_find_and_commands(node):
     asyncio.run(bot.handle("/clients", "42"))
     assert any("Петя" in t for t in node.sent)
     actions = [r["action"] for r in db.query("SELECT action FROM audit_log")]
-    assert "client_disabled" in actions
+    assert "user_disabled" in actions
 
 
 def test_new_endpoints_require_login(client):

@@ -52,8 +52,8 @@ def test_reconcile_adopts_and_restores(client, cluster):
     agent.add("one", "10.8.0.2")
     w2 = agent.add("two", "10.8.0.3", enabled=False)
     asyncio.run(clients.reconcile_all())
-    rows = {r["name"]: r for r in db.query("SELECT * FROM clients")}
-    assert rows["two"]["ipv4"] == "10.8.0.3" and rows["two"]["enabled"] == 0
+    rows = {r["user_name"]: r for r in db.query(clients._SELECT)}    # чужие клиенты ноды — новые пользователи
+    assert rows["two"]["ipv4"] == "10.8.0.3" and rows["two"]["user_enabled"] == 0 and rows["two"]["enabled"] == 1
     del agent.clients[w2]                      # удалён на ноде вручную — панель вернёт профиль
     asyncio.run(clients.reconcile_all())
     again = agent.by_ip("10.8.0.3")

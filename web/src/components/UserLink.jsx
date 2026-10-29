@@ -14,8 +14,8 @@ const copyText = (t) => {
 const small = {padding:"5px 9px",borderRadius:"var(--radius)",fontSize:12,fontWeight:600,cursor:"pointer",
                background:"var(--surface2)",border:"1px solid var(--border)",color:"var(--muted)"};
 
-// ─── Личная ссылка клиента на страницу пользователя (/u/<токен>) ──
-export const UserLink = ({ client }) => {
+// ─── Личная ссылка пользователя на его страницу (/u/<токен>): одна на все устройства ──
+export const UserLink = ({ userId }) => {
   const [token, setToken] = useState(undefined);   // undefined — загрузка, null — ссылки нет
   const [enabled, setEnabled] = useState(true);
   const [msg, setMsg] = useState("");
@@ -26,25 +26,25 @@ export const UserLink = ({ client }) => {
     let dead = false;
     Promise.all([api.userLinks(), api.userPage()])
       .then(([links, page]) => { if (!dead) {
-        setToken(links[client.id]?.token || null); setEnabled(page.enabled);
+        setToken(links[userId]?.token || null); setEnabled(page.enabled);
         if (page.user_url) setBase(page.user_url);
       } })
       .catch(e => { if (!dead) { setToken(null); setMsg(e.message); } });
     return () => { dead = true; };
-  }, [client.id]);
+  }, [userId]);
 
   const url = token ? `${base}/u/${token}` : "";
   const flash = (t) => { setMsg(t); setTimeout(() => setMsg(""), 2500); };
   const issue = async (regenerate) => {
     try {
-      const r = await api.issueLink(client.id, regenerate);
+      const r = await api.issueLink(userId, regenerate);
       setToken(r.token); setConfirmRegen(false);
       await copyText(`${base}${r.path}`);
       flash(regenerate ? "Новая ссылка скопирована — старая больше не работает" : "Ссылка создана и скопирована");
     } catch (e) { flash(e.message); }
   };
   const revoke = async () => {
-    try { await api.revokeLink(client.id); setToken(null); flash("Ссылка отозвана"); }
+    try { await api.revokeLink(userId); setToken(null); flash("Ссылка отозвана"); }
     catch (e) { flash(e.message); }
   };
 
@@ -75,7 +75,7 @@ export const UserLink = ({ client }) => {
         </button>
       )}
       <div style={{fontSize:12,color:"var(--muted)",marginTop:7,lineHeight:1.5}}>
-        {msg || "Пользователь сам скачает конфиг и QR по ссылке, без входа в панель. Сертификат самоподписанный — браузер попросит подтвердить переход."}
+        {msg || "Пользователь сам скачает конфиги и QR всех своих устройств по ссылке, без входа в панель."}
       </div>
     </div>
   );

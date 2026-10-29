@@ -1,7 +1,7 @@
 """страница пользователя по личной ссылке."""
 import pytest
 
-from app import clients, db, userpage
+from app import db, userpage, users
 
 from .conftest import login
 
@@ -13,7 +13,7 @@ def env(client, cluster):
     userpage._misses.clear()
     login(client)
     client.get("/api/clients")
-    pid = db.one("SELECT id FROM clients WHERE ipv4='10.8.0.5'")["id"]
+    pid = db.one("SELECT user_id FROM clients WHERE ipv4='10.8.0.5'")["user_id"]   # ссылка — у пользователя
     return client, cluster, pid
 
 
@@ -37,39 +37,39 @@ def test_fill_escapes_values():
 
 def test_link_lifecycle_and_page(env):
     c, n, pid = env
-    r = c.post(f"/api/clients/{pid}/link").json()
+    r = c.post(f"/api/users/{pid}/link").json()
     token = r["token"]
-    assert r["path"] == f"/u/{token}" and c.post(f"/api/clients/{pid}/link").json()["token"] == token
+    assert r["path"] == f"/u/{token}" and c.post(f"/api/users/{pid}/link").json()["token"] == token
 
     c.cookies.clear()                                 # страница открывается без входа
     page = c.get(f"/u/{token}")
     assert page.status_code == 200
     assert "default-src 'none'" in page.headers["content-security-policy"]
     assert "Маша &lt;телефон&gt;" in page.text and "<svg" in page.text and "активен" in page.text
-    assert f'href="{token}/config?node=' in page.text and "01.01.2099" in page.text
+    assert f'href="{token}/config?c=' in page.text and "01.01.2099" in page.text
     conf = c.get(f"/u/{token}/config")
     assert conf.status_code == 200 and "PrivateKey" in conf.text and "attachment" in conf.headers["content-disposition"]
-    assert db.one("SELECT last_seen FROM user_links WHERE client_id=?", (pid,))["last_seen"]
+    assert db.one("SELECT last_seen FROM user_links WHERE user_id=?", (pid,))["last_seen"]
 
-    clients.update(pid, enabled=False)
+    users.update(pid, enabled=False)
     assert "отключён" in c.get(f"/u/{token}").text
     assert c.get(f"/u/{token}/config").status_code == 403
 
     login(c)
-    new = c.post(f"/api/clients/{pid}/link?regenerate=true").json()["token"]
+    new = c.post(f"/api/users/{pid}/link?regenerate=true").json()["token"]
     assert new != token
     c.cookies.clear()
     assert c.get(f"/u/{token}").status_code == 404
     login(c)
-    c.delete(f"/api/clients/{pid}/link")
+    c.delete(f"/api/users/{pid}/link")
     assert c.get("/api/user-links").json() == {}
     assert c.get(f"/u/{new}").status_code == 404
 
 
 def test_expired_and_disabled_feature(env):
     c, n, pid = env
-    token = c.post(f"/api/clients/{pid}/link").json()["token"]
-    clients.update(pid, expires_at="2020-01-01T00:00:00.000Z")
+    token = c.post(f"/api/users/{pid}/link").json()["token"]
+    users.update(pid, expires_at="2020-01-01T00:00:00.000Z")
     assert "срок истёк" in c.get(f"/u/{token}").text
     assert c.get(f"/u/{token}/config").status_code == 403
     c.put("/api/user-page", json={"enabled": False})
@@ -78,7 +78,7 @@ def test_expired_and_disabled_feature(env):
 
 def test_bruteforce_limit(env):
     c, _, pid = env
-    token = c.post(f"/api/clients/{pid}/link").json()["token"]
+    token = c.post(f"/api/users/{pid}/link").json()["token"]
     for _ in range(userpage.MISS_LIMIT):
         assert c.get("/u/" + "x" * 32).status_code == 404
     assert c.get(f"/u/{token}").status_code == 429

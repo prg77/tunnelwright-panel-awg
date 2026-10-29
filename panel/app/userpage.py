@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 
 import segno
 
-from . import clients, config, db, nodes, quotas, routing
+from . import clients, config, db, nodes, quotas, routing, users
 
 SETTING = "user_page"
 TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{20,64}")
@@ -38,7 +38,7 @@ DEFAULT_TEMPLATE = """# Привет, {name}!
 """
 
 PLACEHOLDERS = {
-    "name": "имя клиента", "ip": "адрес в VPN", "portal": "название панели",
+    "name": "имя пользователя", "ip": "адреса устройств в VPN", "portal": "название панели",
     "expires": "срок доступа", "traffic": "трафик за месяц", "quota": "квота за месяц",
 }
 
@@ -89,30 +89,30 @@ def save_settings(enabled=None, template=None, show_qr=None, user_url=None) -> d
 
 
 # ── ссылки ─────────────────────────────────────────────────────
-def link(client_id: int) -> str | None:
-    r = db.one("SELECT token FROM user_links WHERE client_id=?", (client_id,))
+def link(user_id: int) -> str | None:
+    r = db.one("SELECT token FROM user_links WHERE user_id=?", (user_id,))
     return r["token"] if r else None
 
 
 def all_links() -> dict[str, dict]:
-    return {str(r["client_id"]): {"token": r["token"], "last_seen": r["last_seen"]}
+    return {str(r["user_id"]): {"token": r["token"], "last_seen": r["last_seen"]}
             for r in db.query("SELECT * FROM user_links")}
 
 
-def issue(client_id: int, regenerate: bool = False) -> str:
-    """Токен клиента; regenerate — новый токен, старая ссылка перестаёт работать."""
-    cur = link(client_id)
+def issue(user_id: int, regenerate: bool = False) -> str:
+    """Токен пользователя; regenerate — новый токен, старая ссылка перестаёт работать."""
+    cur = link(user_id)
     if cur and not regenerate:
         return cur
     token = secrets.token_urlsafe(24)
-    db.execute("INSERT INTO user_links(client_id, token, created_at) VALUES(?,?,?) "
-               "ON CONFLICT(client_id) DO UPDATE SET token=excluded.token, created_at=excluded.created_at, "
-               "last_seen=NULL", (client_id, token, int(time.time())))
+    db.execute("INSERT INTO user_links(user_id, token, created_at) VALUES(?,?,?) "
+               "ON CONFLICT(user_id) DO UPDATE SET token=excluded.token, created_at=excluded.created_at, "
+               "last_seen=NULL", (user_id, token, int(time.time())))
     return token
 
 
-def revoke(client_id: int):
-    db.execute("DELETE FROM user_links WHERE client_id=?", (client_id,))
+def revoke(user_id: int):
+    db.execute("DELETE FROM user_links WHERE user_id=?", (user_id,))
 
 
 def blocked(ip: str) -> bool:
@@ -124,13 +124,13 @@ def blocked(ip: str) -> bool:
 
 
 def resolve(token: str, ip: str) -> int | None:
-    """Токен → id клиента панели. Неверные токены считаются по IP (перебор)."""
-    row = db.one("SELECT client_id FROM user_links WHERE token=?", (token,)) if TOKEN_RE.fullmatch(token) else None
+    """Токен → id пользователя. Неверные токены считаются по IP (перебор)."""
+    row = db.one("SELECT user_id FROM user_links WHERE token=?", (token,)) if TOKEN_RE.fullmatch(token) else None
     if not row:
         _misses[ip].append(time.time())
         return None
-    db.execute("UPDATE user_links SET last_seen=? WHERE client_id=?", (int(time.time()), row["client_id"]))
-    return row["client_id"]
+    db.execute("UPDATE user_links SET last_seen=? WHERE user_id=?", (int(time.time()), row["user_id"]))
+    return row["user_id"]
 
 
 # ── разметка шаблона ───────────────────────────────────────────
@@ -224,25 +224,35 @@ def _expiry(exp: str | None, tz: str) -> tuple[str, bool]:
     return when.astimezone(zoneinfo.ZoneInfo(tz)).strftime("%d.%m.%Y"), when < datetime.now(timezone.utc)
 
 
-async def page_data(client_id: int) -> dict:
-    """Всё, что показывает страница: состояние клиента в панели и его профили по нодам."""
+async def page_data(user_id: int) -> dict:
+    """Всё, что показывает страница: состояние пользователя и его конфиги с профилями по нодам."""
     tz = db.get_setting("timezone", "Europe/Moscow")
-    c = clients.get(client_id) or {}
+    u = users.get(user_id) or {}
     month = quotas.month(tz)
-    used = quotas.used(client_id, month)
-    q = db.one("SELECT limit_bytes, blocked FROM quotas WHERE client_id=?", (client_id,))
-    expires, expired = _expiry(c.get("expires_at"), tz)
-    servers = [{"node_id": p["node_id"], "name": p["node_name"]} for p in clients.profiles(client_id)] if c else []
-    return {"id": client_id, "name": c.get("name") or "—", "ip": c.get("ipv4") or "—", "ok": bool(servers),
-            "enabled": bool(c.get("enabled")), "expired": expired, "expires": expires, "servers": servers,
+    used = quotas.used(user_id, month)
+    q = db.one("SELECT limit_bytes, blocked FROM quotas WHERE user_id=?", (user_id,))
+    expires, expired = _expiry(u.get("expires_at"), tz)
+    devices = [{"id": c["id"], "name": c["name"] or "", "ip": c["ipv4"], "enabled": bool(c["enabled"]),
+                "servers": [{"node_id": p["node_id"], "name": p["node_name"]} for p in clients.profiles(c["id"])]}
+               for c in (clients.of_user(user_id) if u else [])]
+    return {"id": user_id, "name": u.get("name") or "—",
+            "ip": ", ".join(d["ip"] for d in devices if d["ip"]) or "—",
+            "ok": any(d["servers"] for d in devices),
+            "enabled": bool(u.get("enabled")), "expired": expired, "expires": expires, "devices": devices,
             "portal": db.get_setting("portal_name", "Private World"),
             "traffic": _gb(used), "used": used, "limit": q["limit_bytes"] if q else None,
             "quota": _gb(q["limit_bytes"]) if q else "без ограничения",
             "quota_blocked": bool(q and q["blocked"] == month)}
 
 
-def can_download(d: dict) -> bool:
-    return d["ok"] and d["enabled"] and not d["expired"]
+def can_download(d: dict, device: dict | None = None) -> bool:
+    """Пользователь активен (и устройство включено, если задано)."""
+    return d["ok"] and d["enabled"] and not d["expired"] and (device is None or device["enabled"])
+
+
+def device(d: dict, cid: int | None) -> dict | None:
+    """Устройство пользователя по id конфига; без id — первое."""
+    return next((x for x in d["devices"] if cid is None or x["id"] == cid), None)
 
 
 async def qr_svg(client_id: int, node_id: int | None = None) -> str | None:
@@ -278,8 +288,8 @@ a{color:var(--accent)}code{font:13px ui-monospace,Menlo,Consolas,monospace;backg
 """
 
 
-def _server_card(srv: dict, show_qr: bool, href: str, many: bool) -> str:
-    """Блок одной ноды: заголовок (если нод несколько), QR и кнопка скачивания."""
+def _server_card(srv: dict, show_qr: bool, href: str, title: str) -> str:
+    """Блок одного профиля (устройство на ноде): заголовок, QR и кнопка скачивания."""
     e = html.escape
     qr = srv.get("qr")
     if not show_qr:
@@ -290,9 +300,13 @@ def _server_card(srv: dict, show_qr: bool, href: str, many: bool) -> str:
         qr_part = qr
     else:
         qr_part = '<div class="note">Конфигурация слишком большая для QR-кода — скачайте файл.</div>'
-    title = f'<h3 style="margin:0">🌍 {e(srv["name"])}</h3>' if many else ""
-    return (f'<div class="card qr">{title}{qr_part}<a class="btn" href="{e(href)}" download>⬇ Скачать конфигурацию</a>'
+    head = f'<h3 style="margin:0">{e(title)}</h3>' if title else ""
+    return (f'<div class="card qr">{head}{qr_part}<a class="btn" href="{e(href)}" download>⬇ Скачать конфигурацию</a>'
             f'<div class="note">Файл .conf импортируется в приложение</div></div>')
+
+
+def _device_name(dev: dict, i: int) -> str:
+    return dev["name"] or f"Устройство {i}"
 
 
 def page_html(d: dict, body_html: str, show_qr: bool, token: str = "", preview: bool = False) -> str:
@@ -316,13 +330,25 @@ def page_html(d: dict, body_html: str, show_qr: bool, token: str = "", preview: 
             f'<div class="row"><span>Трафик за месяц</span><span>{e(d["traffic"])}'
             f'{" из " + e(d["quota"]) if d["limit"] else ""}</span></div>{bar}</div>')
     if can_download(d) or preview:
-        servers = d["servers"]
-        many = len(servers) > 1
-        access = "".join(_server_card(s, show_qr, "#" if preview else f"{token}/config?node={s['node_id']}", many)
-                         for s in servers)      # ссылка относительно /u/<токен>
-        if many:
+        devices = [x for x in d["devices"] if x["enabled"] and x["servers"]] if not preview else d["devices"]
+        many_dev = len(devices) > 1
+        cards = []
+        for i, dev in enumerate(devices, 1):
+            many_srv = len(dev["servers"]) > 1
+            for s in dev["servers"]:
+                title = " · ".join(([f"📱 {_device_name(dev, i)}"] if many_dev else []) +
+                                   ([f"🌍 {s['name']}"] if many_srv else []))
+                href = "#" if preview else f"{token}/config?c={dev['id']}&node={s['node_id']}"  # относительно /u/<токен>
+                cards.append(_server_card(s, show_qr, href, title))
+        access = "".join(cards)
+        if many_dev:
+            access = ('<div class="card note">У вас несколько устройств — на каждом используйте свою '
+                      'конфигурацию.</div>' + access)
+        elif devices and len(devices[0]["servers"]) > 1:
             access = ('<div class="card note">Серверов несколько — подключите любой или добавьте все '
                       'в приложение и переключайтесь между ними.</div>' + access)
+        if not cards:
+            access = '<div class="card note">Конфигураций пока нет — обратитесь к администратору.</div>'
     else:
         access = ('<div class="card note">Доступ сейчас не активен — конфигурация недоступна. '
                   'Обратитесь к администратору.</div>')
@@ -333,26 +359,32 @@ def page_html(d: dict, body_html: str, show_qr: bool, token: str = "", preview: 
             f'<div class="card">{body_html}</div>{access}</main></body></html>')
 
 
-async def render(client_id: int, token: str = "", template: str | None = None, preview: bool = False) -> str:
+async def render(user_id: int, token: str = "", template: str | None = None, preview: bool = False) -> str:
     s = settings()
-    d = await page_data(client_id)
+    d = await page_data(user_id)
     body = fill(render_markup(template if template is not None else s["template"]), d)
     if s["show_qr"] and can_download(d):
-        for srv in d["servers"]:
-            try:
-                srv["qr"] = await qr_svg(client_id, srv["node_id"])
-            except (nodes.NodeError, ValueError):
-                srv["qr"] = "error"
+        for dev in d["devices"]:
+            if not dev["enabled"]:
+                continue
+            for srv in dev["servers"]:
+                try:
+                    srv["qr"] = await qr_svg(dev["id"], srv["node_id"])
+                except (nodes.NodeError, ValueError):
+                    srv["qr"] = "error"
     return page_html(d, body, s["show_qr"], token, preview)
 
 
-SAMPLE = {"id": 0, "name": "Иван телефон", "ip": "10.8.0.7", "ok": True, "enabled": True, "expired": False,
+SAMPLE = {"id": 0, "name": "Иван", "ip": "10.8.0.7, 10.8.0.8", "ok": True, "enabled": True, "expired": False,
           "expires": "31.12.2026", "traffic": "3.42 ГБ", "used": 3.42 * 1024**3, "limit": 50 * 1024**3,
           "quota": "50.00 ГБ", "quota_blocked": False,
-          "servers": [{"node_id": 1, "name": "Финляндия"}, {"node_id": 2, "name": "Швеция"}]}
+          "devices": [{"id": 1, "name": "Телефон", "ip": "10.8.0.7", "enabled": True,
+                       "servers": [{"node_id": 1, "name": "Финляндия"}, {"node_id": 2, "name": "Швеция"}]},
+                      {"id": 2, "name": "Ноутбук", "ip": "10.8.0.8", "enabled": True,
+                       "servers": [{"node_id": 1, "name": "Финляндия"}, {"node_id": 2, "name": "Швеция"}]}]}
 
 
 def render_sample(template: str) -> str:
     d = {**SAMPLE, "portal": db.get_setting("portal_name", "Private World"),
-         "servers": [dict(s) for s in SAMPLE["servers"]]}
+         "devices": [{**x, "servers": [dict(s) for s in x["servers"]]} for x in SAMPLE["devices"]]}
     return page_html(d, fill(render_markup(template), d), False, preview=True)

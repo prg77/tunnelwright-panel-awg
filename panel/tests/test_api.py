@@ -1,4 +1,4 @@
-"""API клиентов и настроек; уведомления Telegram отправляет сервер."""
+"""API пользователей, конфигов и настроек; уведомления Telegram отправляет сервер."""
 import asyncio
 
 from app import db, limits, notify, telegram
@@ -11,27 +11,61 @@ def test_create_with_group_note_limit_on_all_nodes(client, cluster):
     login(client)
     c = client.post("/api/clients", json={"name": "Маша", "group": "Семья", "note": "телефон",
                                           "limit": {"down": 10, "up": 5}}).json()
-    assert (c["ip"], c["group"], c["note"], c["limit"]) == ("10.8.0.2", "Семья", "телефон", {"down": 10.0, "up": 5.0})
-    assert isinstance(c["id"], int) and len(c["uid"]) == 8 and c["enabled"] is True
+    assert (c["ip"], c["user"], c["name"], c["label"], c["limit"]) == \
+        ("10.8.0.2", "Маша", "", "Маша", {"down": 10.0, "up": 5.0})
+    u = client.get(f"/api/users/{c['userId']}").json()
+    assert (u["name"], u["group"], u["note"], u["configs"]) == ("Маша", "Семья", "телефон", [c["id"]])
+    assert isinstance(c["id"], int) and len(c["uid"]) == 8 and c["enabled"] is True and c["active"] is True
     assert sorted(n["name"] for n in c["nodes"]) == ["Финляндия", "Этот сервер"]
     for nid in (cluster.local, remote):
         assert cluster[nid].limits == {"10.8.0.2": {"down": 10.0, "up": 5.0}}
     assert client.post("/api/clients", json={"name": ""}).status_code == 422
     assert client.post("/api/clients", json={"name": "x", "ip": "10.8.0.2"}).status_code == 400
+    assert [u["name"] for u in client.get("/api/users").json()] == ["Маша"]   # без пользователя «x»
 
 
 def test_patch_fields_and_unknown_client(client, cluster):
     login(client)
-    cid = client.post("/api/clients", json={"name": "a", "group": "Работа"}).json()["id"]
-    r = client.patch(f"/api/clients/{cid}", json={"name": "b", "note": "n"}).json()
+    c = client.post("/api/clients", json={"name": "a", "group": "Работа"}).json()
+    cid, uid = c["id"], c["userId"]
+    r = client.patch(f"/api/users/{uid}", json={"name": "b", "note": "n"}).json()
     assert (r["name"], r["note"], r["group"]) == ("b", "n", "Работа")      # группа не сбрасывается
-    r = client.patch(f"/api/clients/{cid}", json={"group": ""}).json()
+    r = client.patch(f"/api/users/{uid}", json={"group": ""}).json()
     assert r["group"] is None and r["note"] == "n"
-    r = client.patch(f"/api/clients/{cid}", json={"expiresAt": None, "enabled": False}).json()
-    assert r["enabled"] is False and cluster[cluster.local].by_ip("10.8.0.2")["enabled"] is False
+    r = client.patch(f"/api/clients/{cid}", json={"name": "телефон", "enabled": False}).json()
+    assert (r["label"], r["enabled"], r["active"]) == ("b · телефон", False, False)
+    assert cluster[cluster.local].by_ip("10.8.0.2")["enabled"] is False
+    assert cluster[cluster.local].by_ip("10.8.0.2")["name"] == "b · телефон"
     assert client.patch("/api/clients/999", json={"name": "x"}).status_code == 404
+    assert client.patch("/api/users/999", json={"name": "x"}).status_code == 404
     acts = [a["action"] for a in db.query("SELECT action FROM audit_log ORDER BY id")]
-    assert "client_renamed" in acts and "client_disabled" in acts
+    assert "client_renamed" in acts and "client_disabled" in acts and "user_renamed" in acts
+
+
+def test_user_toggle_devices_merge_delete(client, cluster):
+    login(client)
+    a = client.post("/api/clients", json={"name": "Иван", "expiresAt": "2030-01-01T00:00:00.000Z"}).json()
+    b = client.post("/api/clients", json={"name": "Иван ноут"}).json()
+    c2 = client.post(f"/api/users/{a['userId']}/configs", json={"name": "планшет"}).json()
+    agent = cluster[cluster.local]
+    assert (c2["userId"], c2["ip"], c2["label"]) == (a["userId"], "10.8.0.4", "Иван · планшет")
+    assert agent.by_ip("10.8.0.4")["expiresAt"] == "2030-01-01T00:00:00.000Z"   # срок пользователя
+    # Отключение пользователя отключает все его конфиги, но не трогает их собственный флаг
+    client.patch(f"/api/users/{a['userId']}", json={"enabled": False})
+    assert agent.by_ip("10.8.0.2")["enabled"] is False and agent.by_ip("10.8.0.4")["enabled"] is False
+    assert agent.by_ip("10.8.0.3")["enabled"] is True
+    client.patch(f"/api/users/{a['userId']}", json={"enabled": True})
+    assert agent.by_ip("10.8.0.2")["enabled"] is True
+    # Объединение: конфиги «Иван ноут» переходят к «Иван», перенесённые безымянные получают имя прежнего пользователя
+    u = client.post(f"/api/users/{a['userId']}/merge", json={"ids": [b["userId"]]}).json()
+    assert len(u["configs"]) == 3 and client.get(f"/api/users/{b['userId']}").status_code == 404
+    assert sorted(c["name"] for c in agent.clients.values()) == ["Иван", "Иван · Иван ноут", "Иван · планшет"]
+    assert agent.by_ip("10.8.0.3")["expiresAt"] == "2030-01-01T00:00:00.000Z"
+    # Удаление одного конфига и всего пользователя
+    assert client.delete(f"/api/clients/{c2['id']}").status_code == 204
+    assert agent.by_ip("10.8.0.4") is None
+    assert client.delete(f"/api/users/{a['userId']}").status_code == 204
+    assert agent.clients == {} and client.get("/api/clients").json() == [] and client.get("/api/users").json() == []
 
 
 def test_limit_endpoints(client, cluster):

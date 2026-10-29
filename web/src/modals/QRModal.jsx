@@ -50,7 +50,7 @@ export const QRModal = ({ client, onClose }) => {
         ctx.fillStyle = "#111111";
         ctx.font = "bold 18px 'Inter',system-ui,sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText(client.name, canvas.width/2, SIZE + 52);
+        ctx.fillText(client.label, canvas.width/2, SIZE + 52);
         ctx.font = "14px 'Courier New',monospace";
         ctx.fillStyle = "#555555";
         ctx.fillText(nodeName ? `${ip} · ${nodeName}` : ip, canvas.width/2, SIZE + 70);
@@ -58,7 +58,7 @@ export const QRModal = ({ client, onClose }) => {
         canvas.toBlob(pngBlob => {
           const a = document.createElement("a");
           a.href = URL.createObjectURL(pngBlob);
-          a.download = `vpn-qr-${client.name||"client"}${nodeName ? "-" + nodeName : ""}.png`.replace(/[\\/:*?"<>|]/g,"_");
+          a.download = `vpn-qr-${client.label||"client"}${nodeName ? "-" + nodeName : ""}.png`.replace(/[\\/:*?"<>|]/g,"_");
           a.click();
           setTimeout(() => URL.revokeObjectURL(a.href), 1000);
           setDlQr(false);
@@ -73,7 +73,7 @@ export const QRModal = ({ client, onClose }) => {
     const msg=[
       `🔐 Ваш VPN-доступ готов`,
       `━━━━━━━━━━━━━━━━━━━━━━━`,
-      `👤 Имя: ${client.name}`,
+      `👤 Имя: ${client.label}`,
       `🌐 IP:  ${ip}`,
       `🛡️  Протокол: AmneziaWG (обфусцированный)`,
       ``,
@@ -112,7 +112,7 @@ export const QRModal = ({ client, onClose }) => {
         {/* Header */}
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontWeight:700,fontSize:15}}>{client.name}{client.uid&&<span title="ID клиента" style={{marginLeft:7,fontSize:12,fontWeight:400,color:"var(--muted)",fontFamily:"var(--mono)"}}>#{client.uid}</span>}</div>
+            <div style={{fontWeight:700,fontSize:15}}>{client.label}{client.uid&&<span title="ID конфига" style={{marginLeft:7,fontSize:12,fontWeight:400,color:"var(--muted)",fontFamily:"var(--mono)"}}>#{client.uid}</span>}</div>
             <div style={{fontSize:12,color:"var(--muted)",fontFamily:"var(--mono)"}}>{ip}</div>
           </div>
           <button onClick={copyMsg} title="Скопировать инструкцию" style={{
@@ -136,7 +136,7 @@ export const QRModal = ({ client, onClose }) => {
           <button onClick={onClose} style={{background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:19,padding:"0 4px",flexShrink:0}}>✕</button>
         </div>
 
-        {/* Ноды: у клиента профиль на каждой */}
+        {/* Ноды: у конфига профиль на каждой */}
         {profiles.length>1&&<div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:12}}>
           {profiles.map(p=>(<button key={p.id} onClick={()=>setNode(p.id)} style={{flex:"1 1 auto",padding:"6px 10px",borderRadius:"var(--radius)",
             cursor:"pointer",fontSize:12,fontWeight:600,border:`1px solid ${node===p.id?"var(--cyan)":"var(--border)"}`,
@@ -184,7 +184,7 @@ export const QRModal = ({ client, onClose }) => {
           </div>
         )}
 
-        <UserLink client={client}/>
+        <UserLink userId={client.userId}/>
 
         {/* App links — all platforms */}
         <div style={{marginBottom:14,background:"var(--bg)",borderRadius:"var(--radius-lg)",padding:"10px 12px"}}>

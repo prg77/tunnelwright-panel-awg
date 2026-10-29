@@ -7,11 +7,13 @@ import { getLastOctet, getPrefix } from "../utils/ip";
 export const DEFAULT_LIMIT = { down: 5, up: 5 };
 
 
-// Клиент создаётся одним запросом: панель заводит профиль на всех нодах, сохраняет группу,
-// заметку и лимит и сама отправляет уведомление в Telegram (если включено).
+// Пользователь с первым устройством создаётся одним запросом: панель заводит профиль на всех нодах,
+// сохраняет группу, заметку и лимит и сама отправляет уведомление в Telegram (если включено).
+// Ещё устройства добавляются в списке пользователей (кнопка «+»).
 export const AddClientPage = ({ push, setQrClient, setPage, clients, onCreated }) => {
   const { names: GROUPS, colors: GC } = useGroups();
   const [addName,  setAddName]  = useState("");
+  const [addDevice,setAddDevice]= useState("");
   const [addGroup, setAddGroup] = useState("Без группы");
   const [addExp,   setAddExp]   = useState("");
   const [addNote,  setAddNote]  = useState("");
@@ -35,23 +37,24 @@ export const AddClientPage = ({ push, setQrClient, setPage, clients, onCreated }
 
   const doCreate = async () => {
     const n = addName.trim();
-    if(!n){ push("Введите имя клиента","err"); return; }
+    if(!n){ push({type:"err", title:"Введите имя пользователя"}); return; }
     setAddBusy(true);
     try{
       const created = await api.createClient({
         name: n,
+        ...(addDevice.trim() ? {device:addDevice.trim()} : {}),
         ...(freeOctets.length>0 ? {ip:`${subnetPrefix}.${ipLastOctet}`} : {}),
         ...(addExp ? {expiresAt:new Date(addExp).toISOString()} : {}),
         ...(addGroup!=="Без группы" ? {group:addGroup} : {}),
         ...(addNote.trim() ? {note:addNote.trim()} : {}),
         ...(limitOn ? {limit:{down:+limit.down, up:+limit.up}} : {}),
       });
-      push({type:"ok", title:`${created.name} создан`, detail:`IP ${created.ip}`
+      push({type:"ok", title:`${created.label} создан`, detail:`IP ${created.ip}`
         + (created.nodes.length ? ` · ноды: ${created.nodes.map(x=>x.name).join(", ")}` : " · профили создадутся, когда появится нода")});
       onCreated(created);
       setPage("clients");
       setTimeout(()=>setQrClient(created), 300);
-    }catch(e){ push({type:"err", title:"Клиент не создан", detail:e.message}); }
+    }catch(e){ push({type:"err", title:"Пользователь не создан", detail:e.message}); }
     finally{ setAddBusy(false); }
   };
 
@@ -60,18 +63,31 @@ export const AddClientPage = ({ push, setQrClient, setPage, clients, onCreated }
   return (
     <div style={{maxWidth:480,width:"100%"}}>
       <Card>
-        <CardH>Создать VPN-клиента</CardH>
+        <CardH sub="ещё устройства — кнопкой «+» в списке пользователей">Новый пользователь</CardH>
         <div style={{padding:"20px 18px",display:"flex",flexDirection:"column",gap:16}}>
 
           {/* Имя — обязательное */}
           <div>
             <label style={{display:"block",fontSize:12,color:"var(--muted)",marginBottom:7,
               fontWeight:700}}>
-              Имя клиента <span style={{color:"var(--error)"}}>*</span>
+              Имя пользователя <span style={{color:"var(--error)"}}>*</span>
             </label>
             <input autoFocus type="text" value={addName} onChange={e=>setAddName(e.target.value)}
               onKeyDown={e=>e.key==="Enter"&&doCreate()}
-              placeholder="iPhone Мама"
+              placeholder="Мама"
+              style={{width:"100%",background:"var(--bg)",border:"1px solid var(--border)",
+                borderRadius:"var(--radius)",color:"var(--text)",fontSize:14,padding:"10px 14px",
+                display:"block",boxSizing:"border-box"}}/>
+          </div>
+
+          {/* Первое устройство — название необязательное */}
+          <div>
+            <label style={{display:"block",fontSize:12,color:"var(--muted)",marginBottom:7,fontWeight:700}}>
+              Устройство
+            </label>
+            <input type="text" value={addDevice} onChange={e=>setAddDevice(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&doCreate()} maxLength={64}
+              placeholder="iPhone — можно оставить пустым"
               style={{width:"100%",background:"var(--bg)",border:"1px solid var(--border)",
                 borderRadius:"var(--radius)",color:"var(--text)",fontSize:14,padding:"10px 14px",
                 display:"block",boxSizing:"border-box"}}/>
@@ -80,7 +96,7 @@ export const AddClientPage = ({ push, setQrClient, setPage, clients, onCreated }
           {/* Ноды: профиль создаётся на каждой */}
           {nodeList&&<div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6}}>
             {nodeList.length===0
-              ? <span style={{color:"var(--warning)"}}>Нод пока нет — клиент получит профили, когда вы добавите ноду (раздел «Ноды»).</span>
+              ? <span style={{color:"var(--warning)"}}>Нод пока нет — устройство получит профили, когда вы добавите ноду (раздел «Ноды»).</span>
               : <>Профиль будет создан на всех нодах:{" "}
                   {nodeList.map((nd,i)=>(<span key={nd.id} title={nd.ok?nd.host:`недоступна — профиль создастся позже`}
                     style={{color:nd.ok?"var(--text)":"var(--warning)"}}>{i>0?", ":""}{nd.ok?"●":"○"} {nd.name}</span>))}</>}

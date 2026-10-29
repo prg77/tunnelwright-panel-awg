@@ -6,7 +6,7 @@
 import json
 import logging
 
-from . import clients, config, db, nodes, telegram
+from . import clients, config, db, nodes, telegram, users
 from . import limits as lim
 
 log = logging.getLogger("panel.legacy")
@@ -39,13 +39,14 @@ async def run():
     n_meta = 0
     for uuid, m in meta.items():
         pid = uuid_to_pid.get(uuid)
-        if pid and isinstance(m, dict):
-            clients.set_meta(pid, m)
+        cfg = clients.get(pid) if pid else None
+        if cfg and isinstance(m, dict):
+            users.set_meta(cfg["user_id"], m)
             if m.get("expiresAt"):
-                clients.update(pid, expires_at=m["expiresAt"])
+                users.update(cfg["user_id"], expires_at=m["expiresAt"])
             n_meta += 1
 
-    usage = _read("client-usage.json", {})
+    usage =_read("client-usage.json", {})
     n_days = 0
     for uuid, rec in usage.items():
         pid = uuid_to_pid.get(uuid)

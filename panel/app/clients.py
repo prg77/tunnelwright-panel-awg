@@ -1,27 +1,29 @@
-"""Клиенты панели и их профили на нодах.
+"""Конфиги пользователей и их профили на нодах.
 
-Клиент — пользователь VPN: имя, IP (один и тот же на всех нодах), включён ли, срок, группа и
-метаданные. На каждой ноде у него профиль — клиент wg-easy со своими ключами.
+Конфиг (строка clients) — устройство пользователя: название, IP (один и тот же на всех нодах),
+включён ли. На каждой ноде у конфига профиль — клиент wg-easy со своими ключами. Имя, срок и
+общее включение — у пользователя (users.py); на ноду уходит итог: имя «Пользователь · устройство»,
+срок пользователя, включён — только если включены и конфиг, и пользователь.
 
 Панель — источник правды. Синхронизация ноды (reconcile) создаёт недостающие профили
 (новая нода, нода была недоступна), выравнивает имя, IP, состояние и срок, дочищает профили
-удалённых клиентов. Клиенты, найденные на ноде без профиля в панели, принимаются в панель.
+удалённых конфигов. Клиенты, найденные на ноде без профиля в панели, принимаются в панель
+как новые пользователи с одним конфигом.
 """
 import asyncio
 import ipaddress
-import json
 import logging
 import secrets
 from datetime import datetime, timezone
 
-from . import db, limits, nodes
+from . import db, limits, nodes, users
 
 log = logging.getLogger("panel.clients")
 
-NO_GROUP = "Без группы"
 SUBNET = ipaddress.ip_network("10.8.0.0/24")   # подсеть wg-easy по умолчанию — одинакова на всех нодах
 
-_SELECT = "SELECT c.*, g.name AS group_name FROM clients c LEFT JOIN groups g ON g.id = c.group_id"
+_SELECT = ("SELECT c.*, u.name AS user_name, u.uid AS user_uid, u.enabled AS user_enabled, "
+           "u.expires_at AS user_expires FROM clients c LEFT JOIN users u ON u.id = c.user_id")
 _locks: dict[int, asyncio.Lock] = {}
 _warned: set = set()
 
@@ -35,16 +37,18 @@ def _node_lock(node_id: int) -> asyncio.Lock:
 
 
 # ── чтение ─────────────────────────────────────────────────────
-def _meta(row) -> dict:
-    try:
-        meta = json.loads(row["meta"] or "{}")
-    except ValueError:
-        meta = {}
-    if row.get("group_name"):
-        meta["group"] = row["group_name"]
-    if row.get("expires_at"):
-        meta["expiresAt"] = row["expires_at"]
-    return meta
+def label(c: dict) -> str:
+    """Имя конфига для нод, файлов и уведомлений: «Пользователь · устройство» или имя пользователя."""
+    user = (c.get("user_name") or "").strip()
+    device = (c.get("name") or "").strip()
+    if user and device:
+        return f"{user} · {device}"
+    return user or device or f"client-{c['id']}"
+
+
+def active(c: dict) -> bool:
+    """Конфиг работает, только если включены и он сам, и его пользователь."""
+    return bool(c["enabled"]) and bool(c.get("user_enabled"))
 
 
 def get(cid: int) -> dict | None:
@@ -55,48 +59,27 @@ def all_clients() -> list[dict]:
     return db.query(f"{_SELECT} WHERE c.deleted=0 ORDER BY c.id")
 
 
+def of_user(user_id: int) -> list[dict]:
+    return db.query(f"{_SELECT} WHERE c.user_id=? AND c.deleted=0 ORDER BY c.id", (user_id,))
+
+
 def profiles(cid: int) -> list[dict]:
-    """Профили клиента по нодам (сначала локальная нода, затем по порядку добавления)."""
+    """Профили конфига по нодам (сначала локальная нода, затем по порядку добавления)."""
     return db.query("SELECT p.*, n.name AS node_name FROM profiles p JOIN nodes n ON n.id = p.node_id "
                     "WHERE p.client_id=? ORDER BY n.is_local DESC, n.id", (cid,))
 
 
-def lookup(cid: int, node_id: int | None = None) -> tuple[nodes.Node, int, dict]:
-    """Клиент → (нода, id профиля в wg-easy, метаданные). Без node_id — первая нода с профилем."""
-    row = get(cid)
-    if not row:
-        raise nodes.NodeError("клиент не найден")
+def lookup(cid: int, node_id: int | None = None) -> tuple[nodes.Node, int]:
+    """Конфиг → (нода, id профиля в wg-easy). Без node_id — первая нода с профилем."""
+    if not get(cid):
+        raise nodes.NodeError("конфиг не найден")
     for p in profiles(cid):
         if node_id is None or p["node_id"] == node_id:
-            return nodes.get(p["node_id"]), p["wg_id"], _meta(row)
-    raise nodes.NodeError("у клиента нет профиля на этой ноде" if node_id else "профили клиента ещё не созданы")
-
-
-def all_meta() -> dict:
-    return {str(r["id"]): _meta(r) for r in all_clients()}
+            return nodes.get(p["node_id"]), p["wg_id"]
+    raise nodes.NodeError("у конфига нет профиля на этой ноде" if node_id else "профили конфига ещё не созданы")
 
 
 # ── изменение ──────────────────────────────────────────────────
-def group_id(name) -> int | None:
-    """Группа по имени; неизвестное имя создаёт группу (импорт amnezia-wg)."""
-    name = str(name or "").strip()[:32]
-    if not name or name == NO_GROUP:
-        return None
-    row = db.one("SELECT id FROM groups WHERE name=?", (name,))
-    if row:
-        return row["id"]
-    return db.execute("INSERT INTO groups(name, sort) VALUES(?, 100)", (name,))
-
-
-def set_meta(cid: int, meta: dict):
-    """Метаданные клиента. Группа и срок хранятся отдельными колонками, остальное — JSON."""
-    meta = dict(meta)
-    gid = group_id(meta.pop("group", None))
-    meta.pop("expiresAt", None)
-    db.execute("UPDATE clients SET meta=?, group_id=? WHERE id=?",
-               (json.dumps(meta, ensure_ascii=False), gid, cid))
-
-
 def check_ip(ip: str, exclude_id: int | None = None) -> str:
     try:
         addr = ipaddress.IPv4Address(str(ip).split("/")[0].strip())
@@ -119,7 +102,7 @@ def free_ip() -> str:
 
 
 def new_uid() -> str:
-    """Скрытый ID клиента: 8 hex-символов, уникален в панели. Имена могут повторяться — ID нет."""
+    """Скрытый ID конфига: 8 hex-символов, записывается агенту ноды и связывает профили при восстановлении."""
     while True:
         uid = secrets.token_hex(4)
         if not db.one("SELECT 1 FROM clients WHERE uid=?", (uid,)):
@@ -130,19 +113,25 @@ def by_uid(uid: str | None) -> dict | None:
     return db.one("SELECT * FROM clients WHERE uid=?", (uid,)) if uid else None
 
 
-def create(name: str, ipv4: str | None = None, expires_at: str | None = None) -> int:
-    name = str(name or "").strip()[:64]
-    if not name:
-        raise ClientError("имя не задано")
+def _device(name) -> str | None:
+    return str(name or "").strip()[:64] or None
+
+
+def create(user_id: int, name: str | None = None, ipv4: str | None = None) -> int:
+    """Новый конфиг пользователя; профили на нодах создаст sync_all."""
+    if not users.get(user_id):
+        raise ClientError("пользователь не найден")
     ip = check_ip(ipv4) if ipv4 else free_ip()
-    return db.execute("INSERT INTO clients(uid, name, ipv4, enabled, expires_at, adopted) VALUES(?,?,?,1,?,1)",
-                      (new_uid(), name, ip, expires_at))
+    return db.execute("INSERT INTO clients(uid, user_id, name, ipv4, enabled, adopted) VALUES(?,?,?,?,1,1)",
+                      (new_uid(), user_id, _device(name), ip))
 
 
 def update(cid: int, **fields):
-    """name / ipv4 / enabled / expires_at в панели; на ноды уходит через sync_all."""
-    allowed = {k: v for k, v in fields.items() if k in ("name", "ipv4", "enabled", "expires_at")}
+    """name (устройство) / ipv4 / enabled в панели; на ноды уходит через sync_all."""
+    allowed = {k: v for k, v in fields.items() if k in ("name", "ipv4", "enabled")}
     old_ip = None
+    if "name" in allowed:
+        allowed["name"] = _device(allowed["name"])
     if "ipv4" in allowed:
         allowed["ipv4"] = check_ip(allowed["ipv4"], cid)
         old_ip = (get(cid) or {}).get("ipv4")
@@ -155,7 +144,7 @@ def update(cid: int, **fields):
 
 
 def _move_limit(old_ip: str, new_ip: str | None):
-    """Лимит скорости привязан к IP: при смене адреса переезжает, при удалении клиента снимается.
+    """Лимит скорости привязан к IP: при смене адреса переезжает, при удалении конфига снимается.
     На ноды уходит со следующей синхронизацией."""
     cur = limits.get()
     if old_ip not in cur:
@@ -171,6 +160,13 @@ def mark_deleted(cid: int):
     db.execute("UPDATE clients SET deleted=1 WHERE id=?", (cid,))
     if ip:
         _move_limit(ip, None)
+
+
+def delete_user(user_id: int):
+    """Пользователь и все его конфиги: лимиты снимаются, профили на нодах дочистит синхронизация."""
+    for c in of_user(user_id):
+        mark_deleted(c["id"])
+    users.delete(user_id)
 
 
 async def sync_all() -> list[str]:
@@ -196,6 +192,15 @@ def _warn_once(key, msg, *args):
         log.warning(msg, *args)
 
 
+def _adopt_foreign(rc: dict) -> int:
+    """Клиент ноды, которого панель не знает, — новый пользователь с одним конфигом."""
+    user_id = users.create(rc.get("name") or f"client-{rc['id']}", rc.get("expiresAt"),
+                           bool(rc.get("enabled")), rc.get("uid"))
+    uid = rc.get("uid") if rc.get("uid") and not by_uid(rc.get("uid")) else new_uid()
+    return db.execute("INSERT INTO clients(uid, user_id, ipv4, enabled, adopted) VALUES(?,?,?,1,1)",
+                      (uid, user_id, rc.get("ipv4")))
+
+
 async def reconcile(node: nodes.Node) -> list[dict]:
     """Привести ноду к состоянию панели. Возвращает профили ноды со счётчиками трафика."""
     async with _node_lock(node.id):
@@ -216,19 +221,17 @@ async def reconcile(node: nodes.Node) -> list[dict]:
                 await node.req("DELETE", f"/clients/{wid}")
                 continue
             if owner and db.one("SELECT 1 FROM profiles WHERE client_id=? AND node_id=?", (owner["id"], node.id)):
-                _warn_once((node.id, wid), "нода %s: клиент %s (%s) — второй профиль того же клиента или адрес занят",
+                _warn_once((node.id, wid), "нода %s: клиент %s (%s) — второй профиль того же конфига или адрес занят",
                            node.name, rc.get("name"), ip)
                 continue
             if owner:
                 cid = owner["id"]
             elif ip and db.one("SELECT 1 FROM clients WHERE ipv4=?", (ip,)):
-                _warn_once((node.id, wid), "нода %s: клиент %s (%s) — адрес занят другим клиентом панели",
+                _warn_once((node.id, wid), "нода %s: клиент %s (%s) — адрес занят другим конфигом панели",
                            node.name, rc.get("name"), ip)
                 continue
             else:
-                uid = rc.get("uid") if rc.get("uid") and not by_uid(rc.get("uid")) else new_uid()
-                cid = db.execute("INSERT INTO clients(uid, name, ipv4, enabled, expires_at, adopted) VALUES(?,?,?,?,?,1)",
-                                 (uid, rc.get("name"), ip, int(bool(rc.get("enabled"))), rc.get("expiresAt")))
+                cid = _adopt_foreign(rc)
             pid = db.execute("INSERT INTO profiles(client_id, node_id, wg_id, public_key) VALUES(?,?,?,?)",
                              (cid, node.id, wid, rc.get("publicKey")))
             profs[wid] = {"id": pid, "client_id": cid, "node_id": node.id, "wg_id": wid}
@@ -237,12 +240,13 @@ async def reconcile(node: nodes.Node) -> list[dict]:
         for wid in [w for w in profs if w not in remote]:
             db.execute("DELETE FROM profiles WHERE id=?", (profs.pop(wid)["id"],))
 
-        clients_by_id = {c["id"]: c for c in db.query("SELECT * FROM clients")}
+        clients_by_id = {c["id"]: c for c in db.query(_SELECT)}
 
-        # 3. Удалённые клиенты — удалить; не принятые после миграции — принять; остальные — выровнять
+        # 3. Удалённые конфиги (и конфиги без пользователя) — удалить; не принятые после миграции —
+        #    принять; остальные — выровнять
         for wid, p in list(profs.items()):
             cl, rc = clients_by_id.get(p["client_id"]), remote[wid]
-            if not cl or cl["deleted"]:
+            if not cl or cl["deleted"] or cl["user_id"] is None:
                 await node.req("DELETE", f"/clients/{wid}")
                 db.execute("DELETE FROM profiles WHERE id=?", (p["id"],))
                 profs.pop(wid)
@@ -251,14 +255,17 @@ async def reconcile(node: nodes.Node) -> list[dict]:
                 ip = rc.get("ipv4")
                 if not ip or db.one("SELECT 1 FROM clients WHERE ipv4=? AND id<>?", (ip, cl["id"])):
                     ip = cl["ipv4"]
-                db.execute("UPDATE clients SET name=COALESCE(name, ?), ipv4=?, enabled=?, expires_at=?, adopted=1 "
-                           "WHERE id=?", (rc.get("name"), ip, int(bool(rc.get("enabled"))), rc.get("expiresAt"), cl["id"]))
-                cl = clients_by_id[cl["id"]] = db.one("SELECT * FROM clients WHERE id=?", (cl["id"],))
+                db.execute("UPDATE users SET name=CASE WHEN name='' THEN COALESCE(?, '') ELSE name END, "
+                           "enabled=?, expires_at=? WHERE id=?",
+                           (rc.get("name"), int(bool(rc.get("enabled"))), rc.get("expiresAt"), cl["user_id"]))
+                db.execute("UPDATE clients SET ipv4=?, adopted=1 WHERE id=?", (ip, cl["id"]))
+                cl = clients_by_id[cl["id"]] = db.one(f"{_SELECT} WHERE c.id=?", (cl["id"],))
+            want_name, want_on = label(cl), active(cl)
             patch = {}
-            if cl["name"] and rc.get("name") != cl["name"]:
-                patch["name"] = cl["name"]
-            if parse_ts(rc.get("expiresAt")) != parse_ts(cl["expires_at"]):
-                patch["expiresAt"] = cl["expires_at"]
+            if rc.get("name") != want_name:
+                patch["name"] = want_name
+            if parse_ts(rc.get("expiresAt")) != parse_ts(cl["user_expires"]):
+                patch["expiresAt"] = cl["user_expires"]
             if cl["ipv4"] and rc.get("ipv4") != cl["ipv4"]:
                 patch["ipv4"] = cl["ipv4"]
             if "uid" in rc and rc["uid"] != cl["uid"]:      # агент хранит скрытый ID профиля
@@ -267,12 +274,12 @@ async def reconcile(node: nodes.Node) -> list[dict]:
                 try:
                     rc.update(await node.json("PATCH", f"/clients/{wid}", json=patch))
                 except nodes.NodeError as e:
-                    _warn_once((node.id, wid, "patch"), "нода %s: клиент %s не обновлён: %s", node.name, cl["name"], e)
-            if bool(rc.get("enabled")) != bool(cl["enabled"]):
-                await node.req("POST", f"/clients/{wid}/{'enable' if cl['enabled'] else 'disable'}")
-                rc["enabled"] = bool(cl["enabled"])
+                    _warn_once((node.id, wid, "patch"), "нода %s: клиент %s не обновлён: %s", node.name, want_name, e)
+            if bool(rc.get("enabled")) != want_on:
+                await node.req("POST", f"/clients/{wid}/{'enable' if want_on else 'disable'}")
+                rc["enabled"] = want_on
 
-        # 4. Клиенты панели без профиля на этой ноде — создать (тот же IP, срок, состояние).
+        # 4. Конфиги без профиля на этой ноде — создать (тот же IP, срок, состояние).
         # Клиент из 2.4, чья нода исчезла до первой синхронизации (VPN убран с сервера панели),
         # не может взять состояние с ноды — принимаем его со свободным IP.
         for cl in clients_by_id.values():
@@ -281,30 +288,30 @@ async def reconcile(node: nodes.Node) -> list[dict]:
                 ip = cl["ipv4"] or free_ip()
                 db.execute("UPDATE clients SET ipv4=?, adopted=1 WHERE id=?", (ip, cl["id"]))
                 cl.update(ipv4=ip, adopted=1)
-                log.info("клиент %s без профилей принят в панель с адресом %s", cl["name"], ip)
+                log.info("конфиг %s без профилей принят в панель с адресом %s", label(cl), ip)
         have = {p["client_id"] for p in profs.values()}
         for cl in clients_by_id.values():
-            if cl["deleted"] or not cl["adopted"] or cl["id"] in have or not cl["ipv4"]:
+            if cl["deleted"] or cl["user_id"] is None or not cl["adopted"] or cl["id"] in have or not cl["ipv4"]:
                 continue
             try:
-                rc = await node.json("POST", "/clients", json={"name": cl["name"] or f"client-{cl['id']}",
-                                                               "ipv4": cl["ipv4"], "expiresAt": cl["expires_at"],
-                                                               "uid": cl["uid"]})
+                rc = await node.json("POST", "/clients", json={"name": label(cl), "ipv4": cl["ipv4"],
+                                                               "expiresAt": cl["user_expires"], "uid": cl["uid"]})
             except nodes.NodeError as e:
-                _warn_once((node.id, "create", cl["id"]), "нода %s: профиль клиента %s не создан: %s",
-                           node.name, cl["name"], e)
+                _warn_once((node.id, "create", cl["id"]), "нода %s: профиль конфига %s не создан: %s",
+                           node.name, label(cl), e)
                 continue
-            if not cl["enabled"]:
+            if not active(cl):
                 await node.req("POST", f"/clients/{rc['id']}/disable")
                 rc["enabled"] = False
             pid = db.execute("INSERT INTO profiles(client_id, node_id, wg_id, public_key) VALUES(?,?,?,?)",
                              (cl["id"], node.id, rc["id"], rc.get("publicKey")))
             profs[rc["id"]] = {"id": pid, "client_id": cl["id"], "node_id": node.id, "wg_id": rc["id"]}
             remote[rc["id"]] = rc
-            log.info("нода %s: создан профиль клиента %s (%s)", node.name, cl["name"], cl["ipv4"])
+            log.info("нода %s: создан профиль конфига %s (%s)", node.name, label(cl), cl["ipv4"])
 
-        # 5. Удалённые клиенты без профилей ни на одной ноде — удалить из панели окончательно
-        db.execute("DELETE FROM clients WHERE deleted=1 AND NOT EXISTS (SELECT 1 FROM profiles WHERE client_id=clients.id)")
+        # 5. Удалённые конфиги без профилей ни на одной ноде — удалить из панели окончательно
+        db.execute("DELETE FROM clients WHERE (deleted=1 OR user_id IS NULL) "
+                   "AND NOT EXISTS (SELECT 1 FROM profiles WHERE client_id=clients.id)")
 
         await limits.push(node)
 
@@ -332,7 +339,7 @@ async def reconcile_all() -> tuple[list[dict], list[nodes.Node]]:
 
 
 def summary(rows: list[dict]) -> dict[int, dict]:
-    """Профили → по клиенту: последний handshake, суммарный трафик, ноды."""
+    """Профили → по конфигу: последний handshake, суммарный трафик, ноды."""
     out: dict[int, dict] = {}
     for p in rows:
         s = out.setdefault(p["client_id"], {"latestHandshakeAt": None, "transferRx": 0, "transferTx": 0, "nodes": []})

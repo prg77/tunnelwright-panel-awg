@@ -1,4 +1,4 @@
-"""клиент = профили на всех нодах с одним IP; панель без локальной ноды."""
+"""конфиг = профили на всех нодах с одним IP; пользователь и его конфиги; панель без локальной ноды."""
 import asyncio
 import importlib
 import sqlite3
@@ -52,15 +52,18 @@ def test_new_node_receives_existing_clients(client, cluster):
 def test_toggle_expiry_rename_address_propagate(client, cluster):
     remote = cluster.add_remote()
     login(client)
-    cid = client.post("/api/clients", json={"name": "Оля"}).json()["id"]
+    c = client.post("/api/clients", json={"name": "Оля"}).json()
+    cid, uid = c["id"], c["userId"]
     client.patch(f"/api/clients/{cid}", json={"enabled": False})
-    client.patch(f"/api/clients/{cid}", json={"expiresAt": "2030-05-01T00:00:00.000Z", "note": "n"})
+    client.patch(f"/api/users/{uid}", json={"expiresAt": "2030-05-01T00:00:00.000Z", "note": "n", "name": "Ольга"})
     client.patch(f"/api/clients/{cid}", json={"ip": "10.8.0.50"})
     for nid in (cluster.local, remote):
         p = cluster[nid].by_ip("10.8.0.50")
-        assert p and p["enabled"] is False and p["expiresAt"] == "2030-05-01T00:00:00.000Z"
+        assert p and p["enabled"] is False and p["expiresAt"] == "2030-05-01T00:00:00.000Z" and p["name"] == "Ольга"
     (row,) = client.get("/api/clients").json()
-    assert (row["note"], row["expiresAt"], row["ip"], row["enabled"]) == ("n", "2030-05-01T00:00:00.000Z", "10.8.0.50", False)
+    assert (row["ip"], row["enabled"], row["label"]) == ("10.8.0.50", False, "Ольга")
+    (u,) = client.get("/api/users").json()
+    assert (u["note"], u["expiresAt"], u["enabled"]) == ("n", "2030-05-01T00:00:00.000Z", True)
 
 
 def test_delete_cleans_nodes_even_if_down(client, cluster):
@@ -98,7 +101,8 @@ def test_limits_same_on_all_nodes(client, cluster):
 def test_config_and_qr_per_node(client, cluster):
     remote = cluster.add_remote(host="203.0.113.9")
     login(client)
-    cid = client.post("/api/clients", json={"name": "Маша"}).json()["id"]
+    c = client.post("/api/clients", json={"name": "Маша"}).json()
+    cid = c["id"]
     r = client.get(f"/api/clients/{cid}/config?node={remote}")
     assert "Endpoint = 203.0.113.9:51820" in r.text
     assert r.headers["content-disposition"].endswith("UTF-8''" + quote("Маша-Финляндия.conf"))
@@ -106,10 +110,19 @@ def test_config_and_qr_per_node(client, cluster):
     assert client.get(f"/api/clients/{cid}/qr.svg?node={remote}").status_code == 200
     assert client.get(f"/api/clients/{cid}/config?node=999").status_code == 502
 
-    token = client.post(f"/api/clients/{cid}/link").json()["token"]
+    token = client.post(f"/api/users/{c['userId']}/link").json()["token"]
     page = client.get(f"/u/{token}").text
     assert page.count("Скачать конфигурацию") == 2 and "Финляндия" in page
     assert "203.0.113.9" in client.get(f"/u/{token}/config?node={remote}").text
+    # Второе устройство: на странице — по профилю на каждую ноду для каждого устройства
+    c2 = client.post(f"/api/users/{c['userId']}/configs", json={"name": "ноутбук"}).json()
+    page = client.get(f"/u/{token}").text
+    assert page.count("Скачать конфигурацию") == 4 and "ноутбук" in page
+    r = client.get(f"/u/{token}/config?c={c2['id']}&node={remote}")
+    assert f"Address = {c2['ip']}/32" in r.text
+    assert r.headers["content-disposition"].endswith("UTF-8''" + quote("Маша · ноутбук-Финляндия.conf"))
+    other = client.post("/api/clients", json={"name": "Чужой"}).json()
+    assert client.get(f"/u/{token}/config?c={other['id']}").status_code == 404   # чужой конфиг недоступен
 
 
 def test_panel_without_local_node(client, cluster, monkeypatch):
@@ -145,11 +158,13 @@ def test_migration_8_keeps_clients(tmp_path, monkeypatch):
     db.connect()
     assert db.one("PRAGMA user_version")["user_version"] == len(db.MIGRATIONS)
     c = db.one("SELECT * FROM clients WHERE id=4")
-    assert c["name"] == "Маша" and c["adopted"] == 0 and c["meta"] == '{"note":"n"}'
+    assert c["name"] is None and c["adopted"] == 0 and c["user_id"] == 4 and c["meta"] == "{}"
+    u = db.one("SELECT * FROM users WHERE id=4")      # миграция 10: клиент → пользователь с одним конфигом
+    assert u["name"] == "Маша" and u["meta"] == '{"note":"n"}' and u["uid"] == c["uid"]
     assert db.one("SELECT node_id, wg_id FROM profiles WHERE client_id=4") == {"node_id": 1, "wg_id": 9}
     assert db.one("SELECT rx FROM traffic_daily WHERE client_id=4")["rx"] == 10
-    assert db.one("SELECT limit_bytes FROM quotas WHERE client_id=4")["limit_bytes"] == 100
-    assert db.one("SELECT token FROM user_links WHERE client_id=4")["token"] == "tok"
+    assert db.one("SELECT limit_bytes FROM quotas WHERE user_id=4")["limit_bytes"] == 100
+    assert db.one("SELECT token FROM user_links WHERE user_id=4")["token"] == "tok"
     db.execute("DELETE FROM nodes WHERE id=1")       # нода ушла — клиент остаётся, профиль удаляется
     assert db.one("SELECT id FROM clients WHERE id=4") and not db.one("SELECT 1 FROM profiles")
 
@@ -157,8 +172,8 @@ def test_migration_8_keeps_clients(tmp_path, monkeypatch):
 def test_orphan_from_removed_local_node_is_recreated(client, cluster):
     """VPN убран с сервера панели до первой синхронизации: клиент 2.4 создаётся на остальных нодах."""
     remote = cluster.add_remote()
-    db.execute("INSERT INTO clients(id, name, meta, adopted, expires_at) VALUES(7, 'Старый', '{}', 0, "
-               "'2099-02-02T00:00:00.000Z')")
+    db.execute("INSERT INTO users(id, uid, name, expires_at) VALUES(7, 'u7', 'Старый', '2099-02-02T00:00:00.000Z')")
+    db.execute("INSERT INTO clients(id, user_id, meta, adopted) VALUES(7, 7, '{}', 0)")
     _sync()
     p = cluster[remote].by_ip("10.8.0.2")
     assert p and p["name"] == "Старый" and p["expiresAt"] == "2099-02-02T00:00:00.000Z"
@@ -199,8 +214,11 @@ def test_bot_find_by_uid(client, cluster):
     login(client)
     a = client.post("/api/clients", json={"name": "Мама"}).json()
     client.post("/api/clients", json={"name": "Мама"})
+    ua = client.get(f"/api/users/{a['userId']}").json()["uid"]       # у пользователя свой скрытый ID
     items = asyncio.run(bot._clients())
     c, err = bot._find(items, "мама")
-    assert c is None and f"#{a['uid']}" in err
-    c, err = bot._find(items, "#" + a["uid"][:5])
-    assert err is None and c["uid"] == a["uid"]
+    assert c is None and f"#{ua}" in err
+    c, err = bot._find(items, "#" + ua[:5])
+    assert err is None and c["uid"] == ua
+    asyncio.run(bot.handle(f"/device #{ua} планшет", "42"))
+    assert [x["label"] for x in client.get("/api/clients").json()] == ["Мама", "Мама", "Мама · планшет"]

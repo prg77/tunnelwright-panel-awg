@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from . import audit, backup, config, db, security, tasks
 from . import userpage as userpage_mod
-from .routers import auth, backups, catalog, clients, nodes, quotas, system, userpage
+from .routers import auth, backups, catalog, clients, nodes, quotas, system, userpage, users
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -50,6 +50,7 @@ app.include_router(catalog.router)
 app.include_router(userpage.router)
 app.include_router(nodes.router)
 app.include_router(clients.router)
+app.include_router(users.router)
 
 
 @app.middleware("http")

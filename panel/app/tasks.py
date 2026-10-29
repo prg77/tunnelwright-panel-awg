@@ -1,10 +1,10 @@
-"""Фоновые задачи panel-api: трафик, сроки клиентов, состояние нод, импорт amnezia-wg."""
+"""Фоновые задачи panel-api: трафик, сроки пользователей, состояние нод, импорт amnezia-wg."""
 import asyncio
 import logging
 import time
 from datetime import datetime, timezone
 
-from . import audit, backup, bot, clients, config, db, geoip, legacy, lists, nodes, nodeupdate, quotas, telegram, traffic
+from . import audit, backup, bot, clients, config, db, geoip, legacy, lists, nodes, nodeupdate, quotas, telegram, traffic, users
 
 log = logging.getLogger("panel.tasks")
 
@@ -19,21 +19,21 @@ _node_ok: dict[int, bool] = {}
 
 
 async def _expiry():
-    """Срок истёк — клиент отключается в панели и на всех нодах (wg-easy и сам отключает профиль)."""
+    """Срок истёк — пользователь отключается в панели и на всех нодах (wg-easy и сам отключает профили)."""
     now = datetime.now(timezone.utc)
     expired = []
-    for c in clients.all_clients():
-        when = clients.parse_ts(c["expires_at"])
-        if c["enabled"] and when and when < now:
-            clients.update(c["id"], enabled=False)
-            expired.append(c)
+    for u in users.all_users():
+        when = clients.parse_ts(u["expires_at"])
+        if u["enabled"] and when and when < now:
+            users.update(u["id"], enabled=False)
+            expired.append(u)
     if not expired:
         return
     await clients.sync_all()
-    for c in expired:
-        audit.log(None, "system", "client_expired", str(c["id"]), name=c["name"])
-        await telegram.send(f"⏳ <b>Срок доступа истёк</b>\n\n👤 <code>{telegram.escape(c['name'] or '')}</code>"
-                            f"\n🌐 <code>{c['ipv4']}</code>\nКлиент отключён.", event="on_toggle")
+    for u in expired:
+        audit.log(None, "system", "user_expired", str(u["id"]), name=u["name"])
+        await telegram.send(f"⏳ <b>Срок доступа истёк</b>\n\n👤 <code>{telegram.escape(u['name'] or '')}</code>"
+                            "\nПользователь отключён.", event="on_toggle")
 
 
 async def _health():

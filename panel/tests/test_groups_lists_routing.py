@@ -3,7 +3,7 @@ import ipaddress
 
 import pytest
 
-from app import clients, db, geoip, routing
+from app import db, geoip, routing, users
 
 from .conftest import login
 
@@ -40,30 +40,32 @@ def api(client, cluster, monkeypatch):
 
 def test_groups_crud_and_meta(api):
     c, pid = api
+    uid = db.one("SELECT user_id FROM clients WHERE id=?", (pid,))["user_id"]
     names = [g["name"] for g in c.get("/api/groups").json()]
     assert names == ["Семья", "Работа", "Гости", "VIP", "Тест"]
     g = c.post("/api/groups", json={"name": "Офис", "color": "#112233"}).json()
     assert c.post("/api/groups", json={"name": "Офис"}).status_code == 409
     assert c.post("/api/groups", json={"name": "x", "color": "red"}).status_code == 400
 
-    r = c.patch(f"/api/clients/{pid}", json={"group": "Офис", "note": "n"}).json()
+    r = c.patch(f"/api/users/{uid}", json={"group": "Офис", "note": "n"}).json()
     assert (r["group"], r["note"]) == ("Офис", "n")
-    assert db.one("SELECT meta FROM clients WHERE id=?", (pid,))["meta"] == '{"note": "n"}'
+    assert db.one("SELECT meta FROM users WHERE id=?", (uid,))["meta"] == '{"note": "n"}'
 
     c.put(f"/api/groups/{g['id']}", json={"name": "Офис 2"})
-    assert c.get("/api/clients").json()[0]["group"] == "Офис 2"
+    assert c.get("/api/users").json()[0]["group"] == "Офис 2"
     assert next(x for x in c.get("/api/groups").json() if x["id"] == g["id"])["clients"] == 1
 
     c.delete(f"/api/groups/{g['id']}")
-    assert c.get("/api/clients").json()[0]["group"] is None
+    assert c.get("/api/users").json()[0]["group"] is None
 
 
 def test_legacy_group_name_creates_group(api):
     _, pid = api
-    clients.set_meta(pid, {"group": "Друзья"})
-    assert db.one("SELECT g.name FROM groups g JOIN clients c ON c.group_id=g.id WHERE c.id=?", (pid,))["name"] == "Друзья"
-    clients.set_meta(pid, {"group": "Без группы"})
-    assert db.one("SELECT group_id FROM clients WHERE id=?", (pid,))["group_id"] is None
+    uid = db.one("SELECT user_id FROM clients WHERE id=?", (pid,))["user_id"]
+    users.set_meta(uid, {"group": "Друзья"})
+    assert db.one("SELECT g.name FROM groups g JOIN users u ON u.group_id=g.id WHERE u.id=?", (uid,))["name"] == "Друзья"
+    users.set_meta(uid, {"group": "Без группы"})
+    assert db.one("SELECT group_id FROM users WHERE id=?", (uid,))["group_id"] is None
 
 
 def test_lists_crud(api):

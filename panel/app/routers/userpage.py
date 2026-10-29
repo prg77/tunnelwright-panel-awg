@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
-from .. import audit, db, nodes, routing, userpage
+from .. import audit, nodes, routing, userpage, users
 from ..security import Admin, client_ip
 
 router = APIRouter(tags=["userpage"])
@@ -20,7 +20,7 @@ def _plain(code: int, text: str) -> HTMLResponse:
                         status_code=code, headers=HEADERS)
 
 
-def _client(token: str, request: Request) -> int | None:
+def _user(token: str, request: Request) -> int | None:
     ip = client_ip(request)
     if userpage.blocked(ip):
         raise HTTPException(429)
@@ -50,31 +50,34 @@ def host_check(request: Request):
 @router.get("/u/{token}", include_in_schema=False)
 async def user_page(token: str, request: Request):
     try:
-        cid = _client(token, request)
+        uid = _user(token, request)
     except HTTPException:
         return _plain(429, "Слишком много запросов. Попробуйте позже.")
-    if cid is None:
+    if uid is None:
         return _plain(404, "Ссылка недействительна. Запросите новую у администратора.")
-    return HTMLResponse(await userpage.render(cid, token), headers=HEADERS)
+    return HTMLResponse(await userpage.render(uid, token), headers=HEADERS)
 
 
 @router.get("/u/{token}/config", include_in_schema=False)
-async def user_config(token: str, request: Request, node: int | None = None):
+async def user_config(token: str, request: Request, c: int | None = None, node: int | None = None):
     try:
-        cid = _client(token, request)
+        uid = _user(token, request)
     except HTTPException:
         return _plain(429, "Слишком много запросов. Попробуйте позже.")
-    if cid is None:
+    if uid is None:
         return _plain(404, "Ссылка недействительна. Запросите новую у администратора.")
-    d = await userpage.page_data(cid)
-    if not userpage.can_download(d):
+    d = await userpage.page_data(uid)
+    dev = userpage.device(d, c)     # только конфиги этого пользователя
+    if not dev:
+        return _plain(404, "Конфигурация не найдена.")
+    if not userpage.can_download(d, dev):
         return _plain(403, "Доступ сейчас не активен — обратитесь к администратору.")
     try:
-        text, name, _ = await routing.client_config(cid, node)
+        text, name, _ = await routing.client_config(dev["id"], node)
     except (nodes.NodeError, ValueError):
         return _plain(503, "Конфигурация временно недоступна. Попробуйте позже.")
-    audit.log(request, "user-page", "user_config_download", str(cid), name=name, node=node)
-    return PlainTextResponse(text, headers={**HEADERS, "Content-Disposition": routing.attachment(name, f"client-{cid}")})
+    audit.log(request, "user-page", "user_config_download", str(dev["id"]), name=name, node=node)
+    return PlainTextResponse(text, headers={**HEADERS, "Content-Disposition": routing.attachment(name, f"client-{dev['id']}")})
 
 
 # ── администрирование ──────────────────────────────────────────
@@ -137,24 +140,24 @@ def preview(body: PageBody, _admin=Admin):
 
 @router.get("/api/user-links")
 def links(_admin=Admin):
-    """{clientId: {token, last_seen}}"""
+    """{userId: {token, last_seen}}"""
     return userpage.all_links()
 
 
-@router.post("/api/clients/{cid}/link")
-def issue_link(cid: int, request: Request, regenerate: bool = False, admin=Admin):
-    if not db.one("SELECT id FROM clients WHERE id=?", (cid,)):
-        raise HTTPException(404, "клиент не найден")
-    had = userpage.link(cid)
-    token = userpage.issue(cid, regenerate)
+@router.post("/api/users/{user_id}/link")
+def issue_link(user_id: int, request: Request, regenerate: bool = False, admin=Admin):
+    if not users.get(user_id):
+        raise HTTPException(404, "пользователь не найден")
+    had = userpage.link(user_id)
+    token = userpage.issue(user_id, regenerate)
     if token != had:
-        audit.log(request, admin, "user_link_regenerated" if had else "user_link_created", str(cid))
+        audit.log(request, admin, "user_link_regenerated" if had else "user_link_created", str(user_id))
     return {"token": token, "path": f"/u/{token}"}
 
 
-@router.delete("/api/clients/{cid}/link")
-def revoke_link(cid: int, request: Request, admin=Admin):
-    if userpage.link(cid):
-        userpage.revoke(cid)
-        audit.log(request, admin, "user_link_revoked", str(cid))
+@router.delete("/api/users/{user_id}/link")
+def revoke_link(user_id: int, request: Request, admin=Admin):
+    if userpage.link(user_id):
+        userpage.revoke(user_id)
+        audit.log(request, admin, "user_link_revoked", str(user_id))
     return {"ok": True}

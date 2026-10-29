@@ -49,15 +49,16 @@ def _archive(tmp_path, password="backup-pass-123", local=False) -> bytes:
 
 
 def test_restore_from_ui(client, monkeypatch, tmp_path):
-    from app import clients
+    from app import clients, users
     monkeypatch.setattr(config, "LOCAL_NODE_URL", "")
     restarts = []
     monkeypatch.setattr(backup, "restart_soon", lambda: restarts.append(1))
     login(client)
     assert client.get("/api/backups").json()["restore"] is True
-    clients.create("из-бэкапа")
+    clients.create(users.create("из-бэкапа"))
     data = _archive(tmp_path, local=True)
     db.execute("DELETE FROM clients")
+    db.execute("DELETE FROM users")
 
     def post(body, pw, name="vpn-panel-backup-20261029-0400.zip"):
         return client.post(f"/api/backups/restore?name={name}", content=body,
@@ -72,7 +73,7 @@ def test_restore_from_ui(client, monkeypatch, tmp_path):
     db._conn.close()
     assert backup.apply_staged_restore() == "vpn-panel-backup-20261029-0400.zip"
     db.connect()
-    assert [c["name"] for c in clients.all_clients()] == ["из-бэкапа"]
+    assert [clients.label(c) for c in clients.all_clients()] == ["из-бэкапа"]
     assert (config.DATA_DIR / "panel.db.before-restore").exists()
     assert backup.apply_staged_restore() is None             # повторно не применяется
 

@@ -28,9 +28,9 @@ export const api = {
   saveSettings:(patch)   => api.req("PUT",  "/settings", patch),
   timezones:   ()        => api.req("GET",  "/timezones"),
   audit:       (beforeId) => api.req("GET", `/audit?limit=100${beforeId ? `&before_id=${beforeId}` : ""}`),
-  // Квоты трафика (ГБ за календарный месяц)
+  // Квоты трафика пользователей (ГБ за календарный месяц, все устройства)
   quotas:      ()        => api.req("GET",  "/quotas"),
-  setQuota:    (id, gb)  => api.req("PUT",  `/clients/${id}/quota`, {limit_gb: gb || null}),
+  setQuota:    (id, gb)  => api.req("PUT",  `/users/${id}/quota`, {limit_gb: gb || null}),   // id пользователя
   // Группы клиентов
   groups:      ()        => api.req("GET",    "/groups"),
   addGroup:    (g)       => api.req("POST",   "/groups", g),
@@ -66,8 +66,8 @@ export const api = {
   previewUserPage: (template) => api.req("POST", "/user-page/preview", {template}),
   checkUserUrl: (url)    => api.req("POST", "/user-page/check", {url}),
   userLinks:   ()        => api.req("GET",    "/user-links"),
-  issueLink:   (id, regenerate) => api.req("POST", `/clients/${id}/link${regenerate ? "?regenerate=true" : ""}`),
-  revokeLink:  (id)      => api.req("DELETE", `/clients/${id}/link`),
+  issueLink:   (id, regenerate) => api.req("POST", `/users/${id}/link${regenerate ? "?regenerate=true" : ""}`),   // id пользователя
+  revokeLink:  (id)      => api.req("DELETE", `/users/${id}/link`),
   // Бэкапы
   backups:     ()        => api.req("GET",  "/backups"),
   saveBackupSettings: (s) => api.req("PUT", "/backups/settings", s),
@@ -84,10 +84,17 @@ export const api = {
   // Telegram-бот
   bot:         ()        => api.req("GET",  "/telegram/bot"),
   setBot:      (enabled) => api.req("PUT",  "/telegram/bot", {enabled}),
-  // Клиенты: профиль на каждой ноде с одним IP; трафик и handshake — по всем нодам
+  // Пользователи: имя, срок, группа, заметка, включение — общие для всех их конфигов
+  users:       ()        => api.req("GET",    "/users"),
+  patchUser:   (id, p)   => api.req("PATCH",  `/users/${id}`, p),      // {name?, enabled?, expiresAt?, group?, note?}
+  delUser:     (id)      => api.req("DELETE", `/users/${id}`),
+  addConfig:   (id, c)   => api.req("POST",   `/users/${id}/configs`, c),   // {name?, ip?, limit?}
+  mergeUsers:  (id, ids) => api.req("POST",   `/users/${id}/merge`, {ids}),
+  sendUserConfigs: (id)  => api.req("POST",   `/users/${id}/telegram`),
+  // Конфиги (устройства): профиль на каждой ноде с одним IP; трафик и handshake — по всем нодам
   clients:     ()        => api.req("GET",    "/clients"),
-  createClient:(c)       => api.req("POST",   "/clients", c),          // {name, ip?, expiresAt?, group?, note?, limit?}
-  patchClient: (id, p)   => api.req("PATCH",  `/clients/${id}`, p),    // {name?, ip?, enabled?, expiresAt?, group?, note?}
+  createClient:(c)       => api.req("POST",   "/clients", c),          // новый пользователь с первым конфигом: {name, device?, ip?, expiresAt?, group?, note?, limit?}
+  patchClient: (id, p)   => api.req("PATCH",  `/clients/${id}`, p),    // {name? (устройство), ip?, enabled?}
   delClient:   (id)      => api.req("DELETE", `/clients/${id}`),
   setLimit:    (id, l)   => api.req("PUT",    `/clients/${id}/limit`, l),  // {down, up} Мбит/с
   delLimit:    (id)      => api.req("DELETE", `/clients/${id}/limit`),

@@ -1,4 +1,4 @@
-"""Учёт трафика на сервере: суточные суммы по клиентам и точки общего графика."""
+"""Учёт трафика на сервере: суточные суммы по конфигам (в отчётах — по пользователям) и точки общего графика."""
 import time
 import zoneinfo
 from datetime import datetime
@@ -52,11 +52,12 @@ async def collect(tz: str):
 
 
 def usage() -> dict:
-    """Суточный трафик клиентов: {id: {name, prev, daily: {день: {tx, rx}}}}."""
+    """Суточный трафик пользователей (все их конфиги): {id: {name, prev, daily: {день: {tx, rx}}}}."""
     out = {}
-    for r in db.query("SELECT t.client_id, t.day, t.rx, t.tx, c.name FROM traffic_daily t "
-                      "LEFT JOIN clients c ON c.id=t.client_id ORDER BY t.day"):
-        rec = out.setdefault(str(r["client_id"]), {"name": r["name"] or "", "prev": None, "daily": {}})
+    for r in db.query("SELECT c.user_id, t.day, SUM(t.rx) AS rx, SUM(t.tx) AS tx, u.name FROM traffic_daily t "
+                      "JOIN clients c ON c.id=t.client_id JOIN users u ON u.id=c.user_id "
+                      "GROUP BY c.user_id, t.day ORDER BY t.day"):
+        rec = out.setdefault(str(r["user_id"]), {"name": r["name"] or "", "prev": None, "daily": {}})
         rec["daily"][r["day"]] = {"tx": r["tx"], "rx": r["rx"]}
     return out
 
