@@ -45,14 +45,14 @@ def test_link_lifecycle_and_page(env):
     page = c.get(f"/u/{token}")
     assert page.status_code == 200
     assert "default-src 'none'" in page.headers["content-security-policy"]
-    assert "Маша &lt;телефон&gt;" in page.text and "<svg" in page.text and "активен" in page.text
+    assert "Маша &lt;телефон&gt;" in page.text and page.text.count("<svg") == 2 and "Активен" in page.text   # логотип и QR
     assert f'href="{token}/config?c=' in page.text and "01.01.2099" in page.text
     conf = c.get(f"/u/{token}/config")
     assert conf.status_code == 200 and "PrivateKey" in conf.text and "attachment" in conf.headers["content-disposition"]
     assert db.one("SELECT last_seen FROM user_links WHERE user_id=?", (pid,))["last_seen"]
 
     users.update(pid, enabled=False)
-    assert "отключён" in c.get(f"/u/{token}").text
+    assert "Отключён" in c.get(f"/u/{token}").text
     assert c.get(f"/u/{token}/config").status_code == 403
 
     login(c)
@@ -70,7 +70,7 @@ def test_expired_and_disabled_feature(env):
     c, n, pid = env
     token = c.post(f"/api/users/{pid}/link").json()["token"]
     users.update(pid, expires_at="2020-01-01T00:00:00.000Z")
-    assert "срок истёк" in c.get(f"/u/{token}").text
+    assert "Срок истёк" in c.get(f"/u/{token}").text
     assert c.get(f"/u/{token}/config").status_code == 403
     c.put("/api/user-page", json={"enabled": False})
     assert c.get(f"/u/{token}").status_code == 404

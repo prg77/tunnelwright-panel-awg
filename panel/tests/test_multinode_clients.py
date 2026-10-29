@@ -121,6 +121,12 @@ def test_config_and_qr_per_node(client, cluster):
     r = client.get(f"/u/{token}/config?c={c2['id']}&node={remote}")
     assert f"Address = {c2['ip']}/32" in r.text
     assert r.headers["content-disposition"].endswith("UTF-8''" + quote("Маша · ноутбук-Финляндия.conf"))
+    # Отключённое устройство: на странице без конфигов, файл не отдаётся; остальные устройства работают
+    client.patch(f"/api/clients/{c2['id']}", json={"enabled": False})
+    page = client.get(f"/u/{token}").text
+    assert page.count("Скачать конфигурацию") == 2 and "Устройство отключено администратором" in page
+    assert client.get(f"/u/{token}/config?c={c2['id']}").status_code == 403
+    assert client.get(f"/u/{token}/config?c={cid}").status_code == 200
     other = client.post("/api/clients", json={"name": "Чужой"}).json()
     assert client.get(f"/u/{token}/config?c={other['id']}").status_code == 404   # чужой конфиг недоступен
 

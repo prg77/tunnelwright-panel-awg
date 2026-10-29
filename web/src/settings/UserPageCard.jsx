@@ -60,7 +60,7 @@ export const UserPageCard = ({ push }) => {
 
   return (
     <Card>
-      <CardH sub="личная ссылка клиента: статус, срок, трафик, QR и файл конфига — без входа в панель">Страница пользователя</CardH>
+      <CardH sub="личная ссылка пользователя: статус, срок, трафик и конфиги всех его устройств — без входа в панель">Страница пользователя</CardH>
       <div style={{padding:"12px 18px",display:"flex",flexDirection:"column",gap:12}}>
         <div style={{display:"flex",gap:20,flexWrap:"wrap"}}>
           <Toggle on={s.enabled} onClick={() => save({enabled:!s.enabled}, s.enabled ? "Страница выключена" : "Страница включена")}>
@@ -94,7 +94,7 @@ export const UserPageCard = ({ push }) => {
           </div>
         </div>
         <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6}}>
-          Ссылку клиента создаёт кнопка <b>QR</b> на странице «Клиенты» или команда бота <code>/link имя</code>.
+          Ссылка одна на пользователя: её создаёт окно <b>QR</b> любого его устройства на странице «Пользователи» или команда бота <code>/link имя</code>.
           Разметка текста: <code># Заголовок</code>, <code>## Подзаголовок</code>, списки <code>-</code> и <code>1.</code>,
           <code>**жирный**</code>, <code>`код`</code>, <code>[текст](https://…)</code>. HTML не поддерживается.
         </div>
@@ -117,11 +117,11 @@ export const UserPageCard = ({ push }) => {
         {preview && (
           <div style={{border:"1px solid var(--border)",borderRadius:"var(--radius-lg)",overflow:"hidden"}}>
             <div style={{display:"flex",alignItems:"center",padding:"6px 10px",fontSize:12,color:"var(--muted)",background:"var(--surface2)"}}>
-              <span style={{flex:1}}>Пример для вымышленного клиента</span>
+              <span style={{flex:1}}>Пример для вымышленного пользователя с двумя устройствами</span>
               <button onClick={() => setPreview("")} style={{background:"none",border:"none",color:"var(--muted)",cursor:"pointer"}}>✕</button>
             </div>
             <iframe title="Предпросмотр страницы пользователя" sandbox="" srcDoc={preview}
-              style={{width:"100%",height:520,border:"none",display:"block",background:"#fff"}}/>
+              style={{width:"100%",height:640,border:"none",display:"block",background:"var(--bg)"}}/>
           </div>
         )}
       </div>
